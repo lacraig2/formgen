@@ -278,14 +278,18 @@ def _modal_body(features: Sequence[BlockFeatures]) -> tuple[FontSize | None, str
         if feature.style_name:
             styles[feature.style_name] += weight
     if not sizes:
-        # No prose at all -- a cover sheet, a form. Fall back to every
-        # non-empty paragraph rather than reporting no body size, since every
-        # ratio downstream would otherwise be undefined.
+        # No prose at all -- a cover sheet, a form, or simply a short
+        # document. Fall back to every non-empty paragraph, still weighted by
+        # word count: an unweighted count here would let four one-word
+        # headings outvote the one paragraph that is actually body text.
         for feature in features:
             if feature.is_paragraph and not feature.is_empty and feature.run.size:
-                sizes[feature.run.size] += 1
+                weight = max(feature.words, 1)
+                sizes[feature.run.size] += weight
+                if feature.font:
+                    fonts[feature.font] += weight
                 if feature.style_name:
-                    styles[feature.style_name] += 1
+                    styles[feature.style_name] += weight
     return (
         _modal(sizes), _modal(fonts), _modal(styles) or "",
     )

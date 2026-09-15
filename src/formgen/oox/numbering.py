@@ -225,6 +225,7 @@ class AbstractNum:
 
     abstract_id: int
     levels: dict[int, Level] = field(default_factory=dict)
+    element: etree._Element | None = None   # for copying into another package
     nsid: str | None = None          # must be unique; duplicates make Word merge lists
     tmpl: str | None = None
     multi_level_type: str | None = None
@@ -250,6 +251,7 @@ class AbstractNum:
             name=_val(el, "w:name"),
             style_link=_val(el, "w:styleLink"),
             num_style_link=_val(el, "w:numStyleLink"),
+            element=el,
         )
 
 
@@ -455,6 +457,11 @@ class Numbering:
         ) or None
 
     # -- diagnostics ----------------------------------------------------
+
+    def element_for_abstract(self, abstract_id: int) -> etree._Element | None:
+        """The parsed w:abstractNum element, for byte-faithful copying."""
+        abstract = self.abstracts.get(abstract_id)
+        return abstract.element if abstract else None
 
     def duplicate_nsids(self) -> dict[str, list[int]]:
         """nsid -> abstract ids sharing it. Word merges lists that collide."""

@@ -134,7 +134,16 @@ def signals_for(
         # Authoritative: the document itself declares this is the field.
         return [Signal(PLACEHOLDER, 0.99, f"content control tagged {tag!r}")]
 
+    # An explicit w:numPr is the document declaring "this is item N of a
+    # list" -- a structural fact, not an appearance. It therefore outranks
+    # every appearance signal, and it suppresses the two that would otherwise
+    # argue for body text: a list item is body-sized and usually carries the
+    # default style, so neither observation discriminates at all.
+    numbered = bool(features.numbering and features.numbering.num_id)
+
     role = role_for_style_name(features.style_name)
+    if role == BODY and numbered:
+        role = None
     if role:
         share = ctx.style_share.get(features.style_name, 0.0)
         if share >= UNINFORMATIVE_SHARE:
@@ -160,10 +169,10 @@ def signals_for(
             f"outline level {features.outline_level} resolved through the style",
         ))
 
-    if features.numbering is not None and features.numbering.num_id:
+    if numbered:
         listed = LIST_BULLET if features.numbering.is_bullet else LIST_NUMBER
         out.append(Signal(
-            listed, 0.90,
+            listed, 0.95,
             f"numbered by list {features.numbering.num_id} "
             f"at level {features.numbering.ilvl}",
         ))
@@ -176,7 +185,8 @@ def signals_for(
         out.append(Signal(CAPTION, 0.70,
                           f"starts like a caption and {where} a figure or table"))
 
-    out.extend(_size_signals(features, ctx))
+    if not numbered:
+        out.extend(_size_signals(features, ctx))
     if (
         features.run.bold
         and 0 < features.words < 12
@@ -187,9 +197,12 @@ def signals_for(
                           "bold, short, unpunctuated and keeps with the next"))
     if features.all_caps and 0 < features.words < 12 and not features.ends_with_terminal:
         out.append(Signal(HEADING, 0.45, "short all-capitals line"))
-    if not out:
-        out.append(Signal(BODY, 0.50, "nothing distinguishes it from body text",
-                          prior=True))
+    if not any(not signal.prior for signal in out):
+        # Only priors fired, which is the same as nothing firing: a paragraph
+        # with no distinguishing feature in a document where its style tells
+        # us nothing is body text by default, and saying so beats leaving the
+        # role to a 0.35 prior nobody can act on.
+        out.append(Signal(BODY, 0.50, "nothing distinguishes it from body text"))
     return out
 
 
@@ -212,8 +225,13 @@ def _size_signals(features: BlockFeatures, ctx: DocumentContext) -> list[Signal]
     if ratio <= 0.92 and (features.follows_graphic or features.precedes_graphic):
         return [Signal(CAPTION, 0.55,
                        f"{ratio:.1f}x the body size, next to a figure or table")]
-    if 0.95 <= ratio <= 1.05:
-        return [Signal(BODY, 0.55, "the same size as the body text")]
+    if 0.93 <= ratio <= 1.07:
+        # Looking exactly like the prose around it is positive evidence for
+        # being prose, not an absence of evidence -- and a document is mostly
+        # body text, so this signal fires more than any other. The upper
+        # bound is tight on purpose: a heading only 10% larger than the body
+        # is common, and a wider band swallows it.
+        return [Signal(BODY, 0.60, "the same size as the body text")]
     return []
 
 

@@ -214,5 +214,15 @@ class Relationships:
         """Relate to a part by absolute part name, encoding the Target correctly."""
         return self.add(reltype, encode_target(partname, self.source))
 
+    def put(self, rid: str, reltype: str, target: str, external: bool = False) -> str:
+        """Install a relationship under a SPECIFIC rId, replacing any existing.
+
+        Cross-package copying needs this: if a copied part keeps the rIds its
+        XML already refers to, the XML needs no rewriting at all -- and not
+        rewriting a customer's XML is always the safer of the two options.
+        """
+        self._rels[rid] = Relationship(rid, reltype, target, external)
+        return rid
+
     def drop(self, rid: str) -> None:
         self._rels.pop(rid, None)

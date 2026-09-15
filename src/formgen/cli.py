@@ -17,7 +17,9 @@ from pathlib import Path
 
 import click
 
-from .errors import FormgenError, InputError, UsageError
+from .errors import (
+    FormgenError, InputError, InvariantError, UsageError,
+)
 from .learn.pipeline import learn as run_learn
 from .opc.errors import PackageError
 from .opc.package import OpcPackage
@@ -241,6 +243,162 @@ def lint(ctx, documents, profile_dir, as_json, verbose, max_severity):
                                  indent=2, sort_keys=True, ensure_ascii=False))
     if worst:
         raise SystemExit(worst)
+
+
+# -- apply ----------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("documents", nargs=-1, type=DOCX, required=True)
+@click.option("--profile", "-p", "profile_dir", required=True,
+              type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--out-dir", type=DIRECTORY, default=None,
+              help="Write outputs here instead of beside the inputs.")
+@click.option("--in-place", is_flag=True,
+              help="Overwrite the input. Implies --backup; refuses without a TTY.")
+@click.option("--backup/--no-backup", default=None,
+              help="Keep a timestamped copy plus an undo manifest.")
+@click.option("--force", is_flag=True, help="Allow --in-place without a terminal.")
+@click.option("--dry-run", is_flag=True,
+              help="Show exactly what would change, and write nothing.")
+@click.option("--mark-uncertain/--no-mark-uncertain", default=None,
+              help="Comment on paragraphs we were unsure about "
+                   "(default: on when run interactively).")
+@click.option("--on-low-confidence", type=click.Choice(["keep", "restyle"]),
+              default="keep", show_default=True,
+              help="What to do with a classification below 0.55 confidence.")
+@click.pass_context
+def apply(ctx, documents, profile_dir, out_dir, in_place, backup, force,
+          dry_run, mark_uncertain, on_low_confidence):
+    """Re-format documents to match a profile."""
+    import sys as _sys
+
+    from .plan.builder import build_plan
+    from .plan.execute import execute
+    from .report.console import render_plan
+    from .safety import backup as backup_mod
+    from .safety import guards
+    from .safety.verify import snapshot, verify
+
+    console = _console(ctx)
+    profile = pio.Profile.load(Path(profile_dir))
+    if not profile.template.exists():
+        _fail(console, UsageError(f"no {pio.TEMPLATE} in {profile_dir}"))
+        return
+    if in_place and backup is None:
+        backup = True
+    if mark_uncertain is None:
+        mark_uncertain = _sys.stdin.isatty() and not dry_run
+    if out_dir:
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+    worst = 0
+    for source in documents:
+        source = Path(source)
+        try:
+            guards.check_source(source)
+            destination = guards.output_path(source, out_dir, in_place)
+            notes = [] if dry_run else guards.check_writable(
+                destination, in_place=in_place, force=force
+            )
+            pkg = OpcPackage.open(source)
+            plan = build_plan(pkg, profile, document_name=source.name)
+            if plan.refusals:
+                render_plan(plan, console)
+                worst = max(worst, 3)
+                continue
+            if dry_run:
+                console.blank()
+                render_plan(plan, console)
+                console.blank()
+                console.write(f"  --dry-run: nothing written. "
+                              f"{len(plan.edits)} block(s) would change.")
+                continue
+
+            before = snapshot(pkg)
+            donor = OpcPackage.open(profile.template)
+            report = execute(pkg, donor, plan,
+                             on_low_confidence=on_low_confidence,
+                             mark_uncertain=mark_uncertain)
+            faults = verify(
+                before, pkg,
+                allowed_gains={"comment anchors": report.comments_added},
+            )
+            if faults:
+                _fail(console, InvariantError(
+                    f"{source.name}: the reformatted document failed its "
+                    f"structural checks, so nothing was written:\n    "
+                    + "\n    ".join(faults[:6])
+                ))
+                return
+
+            saved = backup_mod.make_backup(destination) \
+                if backup and destination.exists() else None
+            pkg.save(destination, deterministic=True)
+            if backup:
+                backup_mod.write_manifest(
+                    source, destination, saved, profile=profile.name,
+                    profile_sha256=profile.template_sha or "", version=VERSION,
+                )
+            _render_apply(console, source, destination, plan, report, notes)
+            if plan.needs_review:
+                worst = max(worst, 1)
+        except FormgenError as exc:
+            _fail(console, exc)
+            return
+        except PackageError as exc:
+            _fail(console, InputError(f"{source.name}: {exc}"))
+            return
+    if worst:
+        raise SystemExit(worst)
+
+
+def _render_apply(console, source, destination, plan, report, notes):
+    console.blank()
+    console.write(f"{source.name} -> {destination}")
+    console.write(f"  {report.summary()}")
+    if report.graft.summary() != "nothing to graft":
+        console.write(f"  {report.graft.summary()}")
+    if report.lists_added or report.lists_reused:
+        console.write(f"  lists: {report.lists_reused} matched the profile, "
+                      f"{report.lists_added} carried over")
+    if report.comments_added:
+        console.write(f"  {report.comments_added} uncertain paragraph(s) "
+                      "commented in the output -- open in Word, Next Comment.")
+    for note in notes + report.graft.notes:
+        console.bullet(note)
+    if report.unmatched_styles:
+        console.bullet(
+            f"{len(report.unmatched_styles)} style(s) had no counterpart in the "
+            f"profile: {', '.join(report.unmatched_styles[:5])}"
+        )
+    review = plan.needs_review
+    if review:
+        console.blank()
+        console.write(f"NEEDS REVIEW ({len(review)})")
+        for i, edit in enumerate(review[:5], 1):
+            console.write(f"  {i}. {edit.locator.describe()}")
+            console.write(f'     Find: "{edit.locator.find_string}"')
+            console.write(f"     read as {edit.role} "
+                          f"(confidence {edit.confidence:.2f}); left unchanged")
+        if len(review) > 5:
+            console.write(f"  ... {len(review) - 5} more")
+
+
+@cli.command()
+@click.argument("document", type=DOCX)
+@click.pass_context
+def undo(ctx, document):
+    """Restore the original of a document formgen rewrote."""
+    from .safety.backup import undo as run_undo
+
+    console = _console(ctx)
+    try:
+        restored = run_undo(Path(document))
+    except FormgenError as exc:
+        _fail(console, exc)
+        return
+    console.write(f"restored {restored}")
 
 
 # -- doctor ---------------------------------------------------------------
