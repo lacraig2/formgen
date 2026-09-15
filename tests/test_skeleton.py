@@ -374,3 +374,25 @@ def test_the_frame_is_what_joins_a_field_across_a_relearn(tmp_path, corpus):
     controls = placeholders_in(OpcPackage.open(tmp_path / "prof" / "template.docx"))
     frames = [entry.get("template") for entry in controls.values()]
     assert any(f and f.startswith("Report No. {") for f in frames)
+
+
+def test_what_learn_counts_is_what_lint_enforces(learned):
+    """One definition, not two. A tool that reports four fixed passages and
+    enforces one has taught the user to distrust both numbers."""
+    result, profile = learned
+    counted = len(result.skeleton.boilerplate)
+    enforced = [s for s in profile.slots("boilerplate") if s.get("enforced")]
+    assert counted == len(enforced)
+
+    body = (
+        build.para("A Different Title Entirely", style="Title")
+        + build.para("Report No. LR-2027-0001", style="BodyText")
+        + build.para("Prepared by M. Rao", style="BodyText")
+        + build.para("Introduction", style="Heading1")
+        + build.para("Nothing like the exemplars.", style="BodyText")
+        + build.para("Methods", style="Heading1")
+        + build.para("Nor this.", style="BodyText")
+    )
+    findings = [f for f in lint(build.make(body), profile).findings
+                if f.code.startswith("structure.boilerplate")]
+    assert len(findings) == counted

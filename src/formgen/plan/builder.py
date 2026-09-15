@@ -28,8 +28,7 @@ from typing import Any
 from ..analyze.stats import bucket
 from ..classify.features import DocumentContext, build_context
 from ..classify.rules import (
-    CAPTION, EMPTY, LIST_BULLET, LIST_NUMBER, PLACEHOLDER, TITLE,
-    Classification, classify_document, role_for_style_name,
+    EMPTY, LIST_BULLET, LIST_NUMBER, PLACEHOLDER, Classification, classify_document, role_for_style_name,
 )
 from ..learn.skeleton import heading_key
 from ..oox.walk import Block, exact_key, match_key
@@ -608,7 +607,9 @@ def _check_boilerplate(plan: Plan, ctx: DocumentContext, profile: Profile,
             by_match[match_key(feature.text)].append(feature)
 
     for slot in profile.slots("boilerplate"):
-        if not _enforceable_boilerplate(slot):
+        # `learn` decided this, so that what it printed and what lint
+        # enforces cannot drift apart.
+        if not slot.get("enforced"):
             continue
         wanted = slot.get("text") or ""
         if not wanted.strip():
@@ -687,30 +688,6 @@ def _check_patterns(plan: Plan, ctx: DocumentContext, profile: Profile,
                 expected=pattern, actual=value,
                 locator=locators.of(feature.block), fixable=False,
             ))
-
-
-# Roles whose text belongs to the document, never to the format. A three-
-# document corpus will happily agree on a title, and enforcing it would tell
-# every author to rename their report.
-_NOT_BOILERPLATE_ROLES = {TITLE, CAPTION, "toc"}
-
-
-def _enforceable_boilerplate(slot: dict) -> bool:
-    """Fixed wording is enforced where fixed wording actually lives.
-
-    On the cover and in the front matter -- before the first heading -- a
-    passage every exemplar shares is a distribution statement, a
-    classification marking or a standard disclaimer, and enforcing it word
-    for word is the point. Under a heading it is prose that several exemplars
-    happened to share, which a small corpus produces constantly, and
-    enforcing *that* would tell authors their Introduction is wrong for not
-    matching last quarter's.
-    """
-    if slot.get("heading") or slot.get("optional"):
-        return False
-    if slot.get("role") in _NOT_BOILERPLATE_ROLES:
-        return False
-    return not (slot.get("section") or "").strip()
 
 
 NEAR_MISS = 0.80

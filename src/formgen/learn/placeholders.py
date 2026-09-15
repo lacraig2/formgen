@@ -39,6 +39,11 @@ BOILERPLATE = "boilerplate"
 PLACEHOLDER = "placeholder"
 FREE_CONTENT = "free_content"
 
+# Roles whose text belongs to the document, never to the format. Three
+# exemplars will happily agree on a title, and enforcing that would tell
+# every author to rename their report.
+NOT_BOILERPLATE_ROLES = {"title", "caption", "toc"}
+
 # Text agreement at or above this means "they all say the same thing".
 VERBATIM = 0.95
 # A field's value is short. Longer than this and it is prose, not a field.
@@ -85,6 +90,10 @@ class Slot:
     donor_index: int | None = None
     donor_value: str = ""
     optional: bool = False
+    # Whether lint holds a document to this slot's exact wording. Decided
+    # here, once, so that what `learn` prints and what `lint` enforces cannot
+    # drift apart.
+    enforced: bool = False
     needs_review: bool = False
     notes: tuple[str, ...] = ()
 
@@ -122,7 +131,17 @@ class SkeletonProfile:
 
     @property
     def boilerplate(self) -> list[Slot]:
-        return [s for s in self.slots if s.kind == BOILERPLATE and not s.is_heading]
+        """Fixed wording lint will hold a document to, word for word.
+
+        Enforced where fixed wording actually lives: on the cover and in the
+        front matter, before the first heading. A passage every exemplar
+        shares *there* is a distribution statement, a classification marking
+        or a standard disclaimer. Under a heading it is prose several
+        exemplars happened to share, which a small corpus produces
+        constantly, and enforcing that would tell authors their Introduction
+        is wrong for not matching last quarter's.
+        """
+        return [s for s in self.slots if s.kind == BOILERPLATE and s.enforced]
 
     def as_json(self) -> dict:
         return {
@@ -176,6 +195,7 @@ def _slot_json(slot: Slot) -> dict:
         row["notes"] = list(slot.notes)
     if slot.kind == BOILERPLATE:
         row["text"] = slot.text
+        row["enforced"] = slot.enforced
     if slot.kind == PLACEHOLDER:
         row.update({
             "name": slot.name,
@@ -225,6 +245,12 @@ def classify(
             slot = _classify_column(index, column, column_texts, total)
             slot.section = title
             slot.is_heading = is_heading
+            slot.enforced = (
+                slot.kind == BOILERPLATE and not is_heading
+                and not slot.optional
+                and slot.role not in NOT_BOILERPLATE_ROLES
+                and not title.strip()
+            )
             if section.free and not is_heading:
                 slot.kind = FREE_CONTENT
                 slot.notes += ("the section was too long to align",)
