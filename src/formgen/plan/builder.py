@@ -28,11 +28,11 @@ from typing import Any
 from ..analyze.stats import bucket
 from ..classify.features import DocumentContext, build_context
 from ..classify.rules import (
-    BODY, CAPTION, EMPTY, LIST_BULLET, LIST_NUMBER, PLACEHOLDER, TITLE,
+    CAPTION, EMPTY, LIST_BULLET, LIST_NUMBER, PLACEHOLDER, TITLE,
     Classification, classify_document, role_for_style_name,
 )
 from ..learn.skeleton import heading_key
-from ..oox.walk import Block, exact_key, has_alt_chunks, match_key
+from ..oox.walk import Block, exact_key, match_key
 from ..opc.package import OpcPackage
 from ..profile.io import Profile
 from ..profile.schema import encode

@@ -31,14 +31,14 @@ from pathlib import Path
 from lxml import etree
 
 from ..oox.sections import SectionModel
-from ..oox.styles import StyleGraph, normalize_style_name
+from ..oox.styles import StyleGraph
 from ..oox.values import Length
 from ..opc.ns import NS, RT, qn
 from ..opc.package import OpcPackage
 from .ast import (
     BlockQuote, Code, CodeBlock, ContentDoc, CrossReference, Directive,
     Emphasis, Figure, Footnote, FootnoteReference, Heading, Image, Inline,
-    LineBreak, Link, ListBlock, ListItem, Math, MathBlock, PageBreak,
+    LineBreak, Link, ListBlock, Math, MathBlock, PageBreak,
     Paragraph, Table, TableOfContents, Text, ThematicBreak,
 )
 from .omml import to_omml

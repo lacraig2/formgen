@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from click.testing import CliRunner
-from lxml import etree
 
 from fixtures import build
 from formgen.cli import cli
@@ -15,7 +14,6 @@ from formgen.content.markdown_in import parse, split_front_matter, validate
 from formgen.content.omml import to_omml, to_tex
 from formgen.learn.pipeline import learn
 from formgen.opc.ns import RT, qn
-from formgen.opc.package import OpcPackage
 from formgen.plan.builder import build_plan
 from formgen.profile.io import Profile
 from formgen.oox.walk import Walker

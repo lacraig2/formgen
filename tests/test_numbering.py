@@ -10,7 +10,7 @@ from formgen.oox.numbering import Numbering, canonical_bullet
 from formgen.oox.props import ParaProps
 from formgen.oox.numbering import numbering_of
 from formgen.oox.styles import StyleGraph
-from formgen.opc.ns import RT, qn
+from formgen.opc.ns import RT
 
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 

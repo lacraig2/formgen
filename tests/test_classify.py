@@ -10,7 +10,6 @@ from formgen.classify.rules import (
     BODY, CAPTION, LIST_BULLET, LIST_NUMBER, PLACEHOLDER, TITLE,
     classify_block, classify_document, role_for_style_name,
 )
-from formgen.oox.values import FontSize
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 

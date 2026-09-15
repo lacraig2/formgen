@@ -17,9 +17,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-learn = ["scikit-learn"]   # Phase 5 corpus clustering only
+# Word COM: doctor, --refresh, --pdf. Ships with Anaconda on Windows and is
+# imported lazily inside word/com.py, so nothing breaks without it.
 word = ["pywin32; sys_platform == 'win32'"]
-dev = ["pytest", "hypothesis"]
+dev = ["pytest", "ruff"]
+
+# Deliberately absent: scikit-learn (the corpus clustering is an exhaustive
+# two-medoid search -- deterministic, and about forty lines) and
+# mdit-py-plugins (our dialect needs custom extensions regardless, so the
+# four we use are ours). Every import in src/ resolves against a stock
+# Anaconda 2023.07-2. Net new installs: none, and CI enforces it.
 
 [project.scripts]
 formgen = "formgen.cli:main"

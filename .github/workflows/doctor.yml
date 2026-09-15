@@ -1,0 +1,60 @@
+name: doctor
+
+# The real gate. LibreOffice tells us a package is not corrupt; only Word
+# tells us Word will open it without a repair prompt, and only Word can grade
+# our style resolver against its own -- docDefaults inheritance, basedOn
+# chains and theme indirection are the three places our code is most likely
+# to be subtly wrong.
+#
+# Needs a self-hosted Windows runner with Word installed, an interactive
+# desktop session, and the `word` label. GitHub-hosted runners have no Word
+# and no desktop, so this cannot run there; it is scheduled rather than saved
+# for release day, because a corruption regression found six weeks late is a
+# corruption regression shipped.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"        # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  word:
+    runs-on: [self-hosted, windows, word]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is there a Word to drive?
+        id: probe
+        shell: pwsh
+        run: |
+          $ok = $false
+          try { $w = New-Object -ComObject Word.Application; $w.Quit(); $ok = $true } catch {}
+          "available=$($ok.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if (-not $ok) { Write-Host "::warning::Word COM is unavailable on this runner; doctor was skipped." }
+
+      - name: Install against the Anaconda the target actually has
+        if: steps.probe.outputs.available == 'true'
+        shell: pwsh
+        run: pip install --no-deps --no-build-isolation -e .
+
+      - name: Build a profile and let Word check it
+        if: steps.probe.outputs.available == 'true'
+        shell: pwsh
+        run: |
+          python -m pytest -q
+          # tests/corpus holds real documents where there are any to check in;
+          # otherwise the fixture builder makes a corpus, which still
+          # exercises the writer, the graft and the donor scrub.
+          python tools/build_qa_corpus.py build\corpus
+          $docs = Get-ChildItem build\corpus\*.docx | ForEach-Object { $_.FullName }
+          formgen learn @docs -o build\profile
+          formgen doctor build\profile\template.docx --pdf build\profile\template.pdf
+
+      - name: Keep the PDF -- rendering fidelity is the thing CI cannot assert
+        if: always() && steps.probe.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctor-output
+          path: build/profile/*.pdf
+          if-no-files-found: ignore

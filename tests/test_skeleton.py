@@ -370,7 +370,7 @@ def test_the_frame_is_what_joins_a_field_across_a_relearn(tmp_path, corpus):
     key. The wording around the value is the same in both, and can be."""
     from formgen.profile.sync import placeholders_in
 
-    result = learn(corpus, tmp_path / "prof", generated="x")
+    learn(corpus, tmp_path / "prof", generated="x")
     controls = placeholders_in(OpcPackage.open(tmp_path / "prof" / "template.docx"))
     frames = [entry.get("template") for entry in controls.values()]
     assert any(f and f.startswith("Report No. {") for f in frames)

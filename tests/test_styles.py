@@ -6,7 +6,7 @@ import pytest
 from lxml import etree
 
 from fixtures.build import make, style, styles_xml
-from formgen.opc.ns import RT, qn
+from formgen.opc.ns import RT
 from formgen.oox.props import ParaProps, RunProps, finalize, fold, resolve_toggle
 from formgen.oox.styles import StyleGraph, normalize_style_name
 from formgen.oox.theme import Theme

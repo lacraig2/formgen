@@ -7,7 +7,7 @@ import zipfile
 import pytest
 from lxml import etree
 
-from fixtures.build import make, para
+from fixtures.build import make
 from formgen.opc.content_types import PART_NAME as CT_PART
 from formgen.opc.ns import RT, qn
 from formgen.opc.package import OpcPackage, PackageError

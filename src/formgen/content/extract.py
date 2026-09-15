@@ -27,7 +27,7 @@ from lxml import etree
 
 from ..classify.features import build_context
 from ..classify.rules import classify_document
-from ..oox.walk import Block, Walker, field_instructions
+from ..oox.walk import Block, field_instructions
 from ..opc.ns import RT, qn
 from ..opc.package import OpcPackage
 from .ast import (

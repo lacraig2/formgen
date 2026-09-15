@@ -537,14 +537,19 @@ class OpcPackage:
                 # garbage. "Atomic" means nothing if the data is not on disk.
                 fh.flush()
                 os.fsync(fh.fileno())
-            self._replace_with_retry(tmp, path)
-        except PackageError:
+        except BaseException:
+            # A partially written output is never left lying around: it is
+            # not a document, and a .tmp beside a report is something a user
+            # will eventually double-click.
             tmp.unlink(missing_ok=True)
             raise
-        except BaseException:
-            # Keep the temp file: it holds the only copy of the work. Deleting
-            # it on the way out turns a retryable failure into data loss.
-            raise
+
+        # Deliberately outside the block above. By here the temp file is
+        # complete and fsynced, and it holds the only copy of the work -- so
+        # if the rename fails because Word has the destination open, the
+        # error names the temp file and the temp file is still there. It said
+        # "your output is preserved at ..."; it has to be true.
+        self._replace_with_retry(tmp, path)
 
     @staticmethod
     def _replace_with_retry(tmp: Path, path: Path) -> None:

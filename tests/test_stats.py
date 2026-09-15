@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from formgen.analyze.stats import (
-    Vote,
     bucket,
     disagreement,
     profile_distance,

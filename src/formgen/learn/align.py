@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Hashable, Sequence
+from typing import Hashable, Sequence
 
 # Beyond this many unmatched blocks between two anchors, declare free content
 # rather than forcing an alignment. The forced one would be noise, and noise

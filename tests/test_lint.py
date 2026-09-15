@@ -13,7 +13,6 @@ from formgen.classify.features import build_context
 from formgen.classify.rules import classify_document
 from formgen.learn.pipeline import learn
 from formgen.opc.ns import qn
-from formgen.opc.package import OpcPackage
 from formgen.plan.builder import build_plan
 from formgen.plan.locator import FindStrings, LocatorFactory, searchable
 from formgen.plan.model import ERROR, WARN

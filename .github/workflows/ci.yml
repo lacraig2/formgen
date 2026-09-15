@@ -1,0 +1,92 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 3.11 is the version that matters: it is what Anaconda 2023.07-2 ships,
+  # which is the target. 3.12 and 3.13 are there to catch forward-compat
+  # breakage early, and the code stays 3.10-clean so nobody on an older
+  # Anaconda is stranded.
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11"]
+        include:
+          - os: ubuntu-latest
+            python: "3.10"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  # The claim "net new installs: none" is only true if something enforces it.
+  # This job installs the package with NO dependency resolution at all and
+  # runs the suite against what Anaconda already ships.
+  anaconda:
+    name: anaconda 2023.07-2 (no pip installs)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.11"
+          auto-activate-base: true
+          activate-environment: ""
+      - name: Everything formgen needs is already here
+        shell: pwsh
+        run: |
+          conda install -y --quiet lxml markdown-it-py pyyaml click `
+            python-dateutil pillow pywin32 pytest
+          python -c "import importlib.util as u, sys; missing=[m for m in ['lxml','markdown_it','yaml','click','dateutil','PIL','pytest'] if not u.find_spec(m)]; sys.exit('missing: '+', '.join(missing) if missing else 0)"
+      - name: Install formgen itself, and nothing else
+        shell: pwsh
+        run: pip install --no-deps --no-build-isolation -e .
+      - shell: pwsh
+        run: pytest -q
+
+  # LibreOffice is not Word, and a clean conversion says nothing about how a
+  # document looks. It does say, reliably, that the package is not corrupt --
+  # the one thing a test written against our own reader cannot tell us,
+  # because our reader would have to be wrong in the same way twice.
+  render:
+    name: LibreOffice renders what we write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer
+      - run: pip install -e ".[dev]"
+      - run: pytest -q tests/test_smoke.py -rs
+        env:
+          FORMGEN_SOFFICE_TIMEOUT: "300"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check src tests

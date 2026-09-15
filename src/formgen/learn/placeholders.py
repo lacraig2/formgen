@@ -32,7 +32,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from .align import (OPTIONAL, PRESENT, Column, Item, Section, Skeleton, Split,
+from .align import (OPTIONAL, PRESENT, Column, Item, Skeleton, Split,
                     kind_of, split_variable_part, text_of)
 
 BOILERPLATE = "boilerplate"

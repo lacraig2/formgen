@@ -27,7 +27,7 @@ looks most correct and makes the worst template.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any
 
 from lxml import etree
@@ -39,7 +39,6 @@ from ..oox.sections import SectionModel
 from ..oox.settings import Settings
 from ..oox.styles import StyleGraph, normalize_style_name
 from ..oox.theme import Theme
-from ..oox.values import Length
 from ..oox.walk import Walker, match_key
 from ..opc.ns import RT, qn
 from ..opc.package import OpcPackage
