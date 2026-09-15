@@ -461,3 +461,83 @@ def render_readme(
 
 def read_profile(directory: Path) -> dict:
     return _json_load(Path(directory) / PROFILE)
+
+
+# -- the loaded, typed view -----------------------------------------------
+
+
+@dataclass
+class Profile:
+    """A profile directory, loaded and typed, as the linter consumes it."""
+
+    directory: Path
+    name: str = ""
+    rules: dict[str, dict] = field(default_factory=dict)
+    overrides: Overrides = field(default_factory=Overrides)
+    corpus: dict = field(default_factory=dict)
+    template_sha: str | None = None
+
+    @classmethod
+    def load(cls, directory: Path) -> Profile:
+        directory = Path(directory)
+        document = read_profile(directory)
+        return cls(
+            directory=directory,
+            name=document.get("name") or directory.name,
+            rules=document.get("rules") or {},
+            overrides=Overrides.load(directory / OVERRIDES),
+            corpus=document.get("corpus") or {},
+            template_sha=(document.get("template") or {}).get("sha256"),
+        )
+
+    @property
+    def template(self) -> Path:
+        return self.directory / TEMPLATE
+
+    def value(self, pointer: str, default: Any = None) -> Any:
+        rule = self.rules.get(pointer)
+        if rule is None:
+            return default
+        return decode(rule.get("value"), pointer)
+
+    def severity(self, pointer: str) -> str:
+        """Lint severity, with overrides.yaml having the last word.
+
+        Muting is expressed here rather than by deleting the rule, so a muted
+        property still shows in `profile show` with its learned value -- the
+        user can see what they switched off.
+        """
+        if pointer in self.overrides.muted:
+            return "off"
+        if pointer in self.overrides.severity:
+            return self.overrides.severity[pointer]
+        rule = self.rules.get(pointer)
+        return rule.get("severity", "off") if rule else "off"
+
+    def status(self, pointer: str) -> str:
+        rule = self.rules.get(pointer)
+        return rule.get("status", "informational") if rule else "informational"
+
+    def pointers_under(self, prefix: str) -> list[str]:
+        from ..util.pointer import under
+
+        return under(self.rules.keys(), prefix)
+
+    @property
+    def style_names(self) -> set[str]:
+        out: set[str] = set()
+        for pointer in self.rules:
+            parts = pointer.split("/")
+            if len(parts) > 4 and parts[1] == "styles":
+                out.add(parts[3])
+        return out
+
+    @property
+    def placeholders(self) -> dict[str, dict]:
+        return self.overrides.placeholders
+
+    def required_placeholders(self) -> set[str]:
+        return {
+            name for name, body in self.placeholders.items()
+            if body.get("required", True)
+        }

@@ -190,6 +190,59 @@ def profile_show(ctx, directory, show_all):
         console.write(f"  ... {len(rows) - 30} more; --all to see them")
 
 
+# -- lint -----------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("documents", nargs=-1, type=DOCX, required=True)
+@click.option("--profile", "-p", "profile_dir", required=True,
+              type=click.Path(exists=True, file_okay=False, path_type=Path),
+              help="Profile directory produced by `formgen learn`.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable report.")
+@click.option("--verbose", "-v", is_flag=True,
+              help="Show the evidence behind each classification.")
+@click.option("--max-severity", type=click.Choice(["error", "warn", "info"]),
+              default="error", show_default=True,
+              help="Lowest severity that makes the command fail.")
+@click.pass_context
+def lint(ctx, documents, profile_dir, as_json, verbose, max_severity):
+    """Check documents against a profile. Changes nothing."""
+    from .plan.builder import build_plan
+    from .plan.model import SEVERITY_ORDER
+    from .report.console import render_plan
+    from .report.jsonout import plan_dict
+
+    console = _console(ctx)
+    profile = pio.Profile.load(Path(profile_dir))
+    threshold = SEVERITY_ORDER[max_severity]
+    plans = []
+    worst = 0
+    for path in documents:
+        try:
+            pkg = OpcPackage.open(Path(path))
+        except PackageError as exc:
+            _fail(console, InputError(f"{Path(path).name}: {exc}"))
+            return
+        plan = build_plan(pkg, profile, document_name=Path(path).name)
+        plans.append(plan)
+        if plan.refusals:
+            worst = max(worst, 3)
+        elif any(f.rank <= threshold for f in plan.findings):
+            worst = max(worst, 1)
+        if not as_json:
+            if len(documents) > 1:
+                console.blank()
+                console.rule()
+            render_plan(plan, console, verbose=verbose)
+
+    if as_json:
+        payload = [plan_dict(p) for p in plans]
+        console.write(json.dumps(payload if len(payload) > 1 else payload[0],
+                                 indent=2, sort_keys=True, ensure_ascii=False))
+    if worst:
+        raise SystemExit(worst)
+
+
 # -- doctor ---------------------------------------------------------------
 
 
