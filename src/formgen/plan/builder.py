@@ -31,7 +31,8 @@ from ..classify.rules import (
     BODY, CAPTION, EMPTY, LIST_BULLET, LIST_NUMBER, PLACEHOLDER, TITLE,
     Classification, classify_document, role_for_style_name,
 )
-from ..oox.walk import Block, has_alt_chunks, match_key
+from ..learn.skeleton import heading_key
+from ..oox.walk import Block, exact_key, has_alt_chunks, match_key
 from ..opc.package import OpcPackage
 from ..profile.io import Profile
 from ..profile.schema import encode
@@ -118,6 +119,7 @@ def build_plan(
     _check_lists(plan, ctx, profile, classifications, locators)
     _check_headers(plan, ctx, profile, pkg)
     _check_placeholders(plan, ctx, profile, classifications, locators)
+    _check_structure(plan, ctx, profile, classifications, locators)
     _build_edits(plan, ctx, classifications, locators, role_styles)
 
     plan.stats = {
@@ -408,22 +410,33 @@ def _check_placeholders(plan: Plan, ctx: DocumentContext, profile: Profile,
     required = profile.required_placeholders()
     if not required:
         return
-    found: dict[str, bool] = {}
-    for feature in ctx.features:
-        tag = feature.sdt_tag or ""
-        name = tag.split(".", 1)[1] if tag.startswith("formgen.") else None
-        if name is None:
+    filled, empty = _placeholder_values(ctx, profile)
+
+    for name, feature in sorted(empty.items()):
+        if name in filled:
             continue
-        filled = bool(feature.text.strip()) and not feature.block.context.is_placeholder
-        found[name] = found.get(name, False) or filled
-        if not filled:
-            plan.add(Finding(
-                code="placeholder.empty", severity=WARN,
-                rule_id=f"/placeholders/{name}",
-                message=f"the {name!r} field is empty",
-                locator=locators.of(feature.block), fixable=False,
-            ))
-    for name in sorted(required - set(found)):
+        plan.add(Finding(
+            code="placeholder.empty", severity=WARN,
+            rule_id=f"/placeholders/{name}",
+            message=f"the {name!r} field is empty",
+            locator=locators.of(feature.block), fixable=False,
+        ))
+    frames = _frames(profile)
+    has_controls = any(
+        (f.sdt_tag or "").startswith("formgen.") for f in ctx.features
+    )
+    # Only *inferred* placeholders can be written off as unverifiable. One a
+    # user declared by hand in overrides.yaml is a requirement they stated,
+    # and its absence is an error whatever the document looks like.
+    inferred = {s.get("name") for s in profile.slots("placeholder")}
+    unverifiable = []
+    for name in sorted(required - set(filled) - set(empty)):
+        if not has_controls and name not in frames and name in inferred:
+            # No control anywhere and no literal wording around the field:
+            # there is nothing in the document to look for. Saying "missing"
+            # would be a guess dressed as a finding.
+            unverifiable.append(name)
+            continue
         plan.add(Finding(
             code="placeholder.missing", severity=ERROR,
             rule_id=f"/placeholders/{name}",
@@ -431,6 +444,314 @@ def _check_placeholders(plan: Plan, ctx: DocumentContext, profile: Profile,
                      "template carries a content control for it"),
             locator=document_locator(), fixable=False,
         ))
+    if unverifiable:
+        plan.add(Finding(
+            code="placeholder.unverifiable", severity=INFO,
+            rule_id="/placeholders",
+            message=(
+                f"{len(unverifiable)} field(s) cannot be checked in a document "
+                f"with no content controls: {', '.join(unverifiable)}. "
+                "Documents made with `formgen new`, or from template.docx, "
+                "carry them."
+            ),
+            locator=document_locator(), fixable=False,
+        ))
+
+
+def _placeholder_values(ctx: DocumentContext, profile: Profile
+                        ) -> tuple[dict[str, tuple[str, Any]], dict[str, Any]]:
+    """Find each placeholder's value, by control *or* by its literal frame.
+
+    A foreign document has no content controls at all -- that is the normal
+    case for `lint`, and reporting every learned field as missing would make
+    the rule useless on exactly the documents it exists for. So a field is
+    also found by the boilerplate around it: the corpus said this paragraph
+    reads "Report No. " and then something, so a paragraph that reads
+    "Report No. LR-2027-0001" has the field, control or no control.
+    """
+    filled: dict[str, tuple[str, Any]] = {}
+    empty: dict[str, Any] = {}
+
+    for feature in ctx.features:
+        tag = feature.sdt_tag or ""
+        if not tag.startswith("formgen."):
+            continue
+        name = tag.split(".", 1)[1]
+        value = feature.text.strip()
+        if value and not feature.block.context.is_placeholder:
+            filled.setdefault(name, (value, feature))
+        else:
+            empty.setdefault(name, feature)
+
+    frames = _frames(profile)
+    if not frames:
+        return filled, empty
+    for feature in ctx.features:
+        if not feature.is_paragraph:
+            continue
+        text = match_key(feature.text)
+        for name, (prefix, suffix) in frames.items():
+            if name in filled or not text.startswith(prefix):
+                continue
+            if suffix and not text.endswith(suffix):
+                continue
+            value = text[len(prefix):len(text) - len(suffix)].strip()
+            if value:
+                filled[name] = (value, feature)
+            else:
+                empty.setdefault(name, feature)
+    return filled, empty
+
+
+def _frames(profile: Profile) -> dict[str, tuple[str, str]]:
+    """name -> (literal before the value, literal after it), match-normalized.
+
+    Only fields with a literal on at least one side are usable this way. A
+    placeholder that is a whole paragraph of its own -- an author line, say --
+    has no frame to recognize, and guessing at one would match every
+    paragraph in the document.
+    """
+    out: dict[str, tuple[str, str]] = {}
+    for slot in profile.slots("placeholder"):
+        name = slot.get("name")
+        template = slot.get("template") or ""
+        marker = "{" + str(name) + "}"
+        if not name or marker not in template:
+            continue
+        before, after = template.split(marker, 1)
+        prefix, suffix = match_key(before), match_key(after)
+        if prefix or suffix:
+            out[name] = (prefix, suffix)
+    return out
+
+
+# -- structure ------------------------------------------------------------
+
+
+def _check_structure(plan: Plan, ctx: DocumentContext, profile: Profile,
+                     classifications: dict[str, Classification],
+                     locators: LocatorFactory) -> None:
+    """Required sections, in order, and boilerplate word for word.
+
+    Only the confident part of the skeleton is enforced. A section present in
+    60% of the exemplars is as likely to be optional as forgotten, and a rule
+    built on that guess fires on documents that are perfectly fine -- which
+    is how a linter teaches people to ignore it.
+    """
+    if not profile.skeleton:
+        return
+    _check_sections(plan, ctx, profile, classifications, locators)
+    _check_boilerplate(plan, ctx, profile, locators)
+    _check_patterns(plan, ctx, profile, locators)
+
+
+def _check_sections(plan: Plan, ctx: DocumentContext, profile: Profile,
+                    classifications: dict[str, Classification],
+                    locators: LocatorFactory) -> None:
+    required = profile.required_sections()
+    if not required:
+        return
+    found: list[tuple[str, Block]] = []
+    for feature in ctx.features:
+        result = classifications.get(feature.path)
+        if result is None or result.level is None:
+            continue
+        found.append((heading_key(feature.text), feature.block))
+    present = {key for key, _ in found}
+
+    for slot in required:
+        key = heading_key(slot.get("section") or slot.get("text") or "")
+        if key and key not in present:
+            plan.add(Finding(
+                code="structure.section_missing",
+                severity=_structure_severity(profile, "structure.section_missing"),
+                rule_id=f"/skeleton/slots/{slot['index']}",
+                message=(f"the document has no {slot.get('section')!r} section; "
+                         "every exemplar has one"),
+                locator=document_locator(), fixable=False,
+            ))
+
+    # Order is checked only over the sections the document actually has:
+    # reporting a missing section again as "out of order" is noise.
+    wanted = [heading_key(s.get("section") or "") for s in required]
+    wanted = [k for k in wanted if k in present]
+    actual = [key for key, _ in found if key in set(wanted)]
+    seen: list[str] = []
+    for key in actual:
+        if key not in seen:
+            seen.append(key)
+    if seen != wanted:
+        plan.add(Finding(
+            code="structure.section_order",
+            severity=_structure_severity(profile, "structure.section_order"),
+            rule_id="/skeleton/order",
+            message=(
+                "sections are in a different order than the exemplars: "
+                f"expected {' > '.join(wanted)}, found {' > '.join(seen)}"
+            ),
+            locator=document_locator(), fixable=False,
+        ))
+
+
+def _check_boilerplate(plan: Plan, ctx: DocumentContext, profile: Profile,
+                       locators: LocatorFactory) -> None:
+    """Fixed wording, located tolerantly and then verified strictly.
+
+    The two keys are deliberately different. `match_key` folds dashes, quotes
+    and ligatures so the paragraph is *found* despite cosmetic differences;
+    `exact_key` then keeps those characters distinct so the report can say a
+    distribution statement has the wrong dash rather than quietly passing it.
+    """
+    by_match: dict[str, list] = defaultdict(list)
+    for feature in ctx.features:
+        if feature.is_paragraph and feature.text.strip():
+            by_match[match_key(feature.text)].append(feature)
+
+    for slot in profile.slots("boilerplate"):
+        if not _enforceable_boilerplate(slot):
+            continue
+        wanted = slot.get("text") or ""
+        if not wanted.strip():
+            continue
+        candidates = by_match.get(match_key(wanted), [])
+        if not candidates:
+            # A near miss is far more useful than "missing": the author did
+            # write the passage and changed a word, and pointing at the
+            # paragraph they changed is the whole job.
+            near = _nearest(wanted, by_match)
+            if near is None:
+                plan.add(Finding(
+                    code="structure.boilerplate_missing",
+                    severity=_structure_severity(profile, "structure.boilerplate_missing"),
+                    rule_id=f"/skeleton/slots/{slot['index']}",
+                    message=f"required wording is missing: {_clip(wanted)}",
+                    expected=wanted, locator=document_locator(), fixable=False,
+                ))
+                continue
+            candidates = [near]
+        exact = exact_key(wanted)
+        if any(exact_key(f.text) == exact for f in candidates):
+            continue
+        feature = candidates[0]
+        plan.add(Finding(
+            code="structure.boilerplate_altered",
+            severity=_structure_severity(profile, "structure.boilerplate_altered"),
+            rule_id=f"/skeleton/slots/{slot['index']}",
+            message=(f"required wording differs from the profile: "
+                     f"{_clip(feature.text)}"),
+            expected=wanted, actual=feature.text,
+            locator=locators.of(feature.block), fixable=False,
+        ))
+
+
+def _check_patterns(plan: Plan, ctx: DocumentContext, profile: Profile,
+                    locators: LocatorFactory) -> None:
+    """A filled field whose value does not look like the others.
+
+    The pattern came from a handful of examples, so this is a warning and
+    never an error, and `overrides.yaml` is where a user loosens or deletes
+    it once they have seen the first false positive.
+    """
+    import re as _re
+
+    patterns = {
+        name: body["pattern"]
+        for name, body in profile.placeholders.items()
+        if body.get("pattern")
+    }
+    if not patterns:
+        return
+    filled, _ = _placeholder_values(ctx, profile)
+    for name, (value, feature) in sorted(filled.items()):
+        pattern = patterns.get(name)
+        if not pattern:
+            continue
+        try:
+            matches = _re.search(pattern, value) is not None
+        except _re.error:
+            plan.add(Finding(
+                code="placeholder.bad_pattern", severity=WARN,
+                rule_id=f"/placeholders/{name}",
+                message=(f"the pattern for {name!r} in overrides.yaml is not a "
+                         f"valid regular expression: {pattern}"),
+                locator=document_locator(), fixable=False,
+            ))
+            patterns[name] = ""
+            continue
+        if not matches:
+            plan.add(Finding(
+                code="placeholder.pattern", severity=WARN,
+                rule_id=f"/placeholders/{name}",
+                message=(f"{name} is {value!r}, which does not match the shape "
+                         f"the exemplars share ({pattern})"),
+                expected=pattern, actual=value,
+                locator=locators.of(feature.block), fixable=False,
+            ))
+
+
+# Roles whose text belongs to the document, never to the format. A three-
+# document corpus will happily agree on a title, and enforcing it would tell
+# every author to rename their report.
+_NOT_BOILERPLATE_ROLES = {TITLE, CAPTION, "toc"}
+
+
+def _enforceable_boilerplate(slot: dict) -> bool:
+    """Fixed wording is enforced where fixed wording actually lives.
+
+    On the cover and in the front matter -- before the first heading -- a
+    passage every exemplar shares is a distribution statement, a
+    classification marking or a standard disclaimer, and enforcing it word
+    for word is the point. Under a heading it is prose that several exemplars
+    happened to share, which a small corpus produces constantly, and
+    enforcing *that* would tell authors their Introduction is wrong for not
+    matching last quarter's.
+    """
+    if slot.get("heading") or slot.get("optional"):
+        return False
+    if slot.get("role") in _NOT_BOILERPLATE_ROLES:
+        return False
+    return not (slot.get("section") or "").strip()
+
+
+NEAR_MISS = 0.80
+
+
+def _nearest(wanted: str, by_match: dict[str, list]):
+    """The closest paragraph in the document, if it is close enough."""
+    from difflib import SequenceMatcher
+
+    target = match_key(wanted)
+    best, score = None, NEAR_MISS
+    for key, features in sorted(by_match.items()):
+        ratio = SequenceMatcher(None, target, key, autojunk=False).ratio()
+        if ratio > score:
+            best, score = features[0], ratio
+    return best
+
+
+def _structure_severity(profile: Profile, code: str) -> str:
+    """Structural rules are severity-tunable by code, not by pointer.
+
+    They are not learned properties with a coverage and an agreement, so
+    there is no vote to read a severity off; `overrides.yaml` names the rule
+    family directly.
+    """
+    override = profile.overrides.severity.get(code)
+    if override:
+        return override
+    # Missing wording is a warning because no command adds it: `apply`
+    # reformats what is there and cannot invent a distribution statement, so
+    # an error here would be a permanent one. Wording that IS there and has
+    # been altered is an error -- somebody edited it.
+    if code in ("structure.section_order", "structure.boilerplate_missing",
+                "structure.section_missing"):
+        return WARN
+    return ERROR
+
+
+def _clip(text: str, width: int = 60) -> str:
+    text = " ".join(text.split())
+    return repr(text if len(text) <= width else text[:width - 3] + "...")
 
 
 # -- edits ----------------------------------------------------------------

@@ -133,8 +133,32 @@ def placeholders_in(pkg: OpcPackage) -> dict[str, dict]:
             # A locked control bounces the user's own edits, which defeats the
             # entire correction workflow. Flag it rather than fixing silently.
             entry["locked"] = True
+        # The literal wording around the control, which is how a re-learn
+        # recognises this field again. The corpus has no content controls, so
+        # the tag cannot be the join key; the frame can.
+        frame = _frame_around(sdt, name)
+        if frame:
+            entry["template"] = frame
         out[name] = entry
     return out
+
+
+def _frame_around(sdt, name: str) -> str:
+    """Rebuild "Report No. {report_number}" from the control's own paragraph."""
+    paragraph = sdt.getparent()
+    while paragraph is not None and paragraph.tag != qn("w:p"):
+        paragraph = paragraph.getparent()
+    if paragraph is None:
+        return ""
+    content = sdt.find(qn("w:sdtContent"))
+    inside = "".join(content.itertext()) if content is not None else ""
+    whole = "".join(paragraph.itertext())
+    if not inside or inside not in whole:
+        return ""
+    head, _, tail = whole.partition(inside)
+    if not head.strip() and not tail.strip():
+        return ""
+    return f"{head}{{{name}}}{tail}"
 
 
 def sync(directory: Path, today: str | None = None) -> SyncReport:

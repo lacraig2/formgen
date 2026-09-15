@@ -349,10 +349,48 @@ class Problem:
     remedy: str = ""
 
 
+def _check_field_shapes(doc: ContentDoc, fields: dict[str, dict]) -> list[Problem]:
+    """Front-matter values against the shape the exemplars shared.
+
+    Always a problem the author can override, never a refusal: the pattern
+    was inferred from a handful of documents, and the first report with a
+    genuinely new numbering scheme must not be unpublishable. It is worth
+    saying out loud, because a report number with a typo in it is exactly the
+    kind of thing nobody notices until it is printed.
+    """
+    problems: list[Problem] = []
+    for name, spec in sorted(fields.items()):
+        pattern = spec.get("pattern")
+        value = doc.meta.get(name)
+        if not pattern or value in (None, ""):
+            continue
+        try:
+            matched = re.search(pattern, str(value)) is not None
+        except re.error:
+            problems.append(Problem(
+                "placeholder.bad_pattern",
+                f"the pattern for {name!r} is not a valid regular expression: "
+                f"{pattern}",
+                "fix or delete it in overrides.yaml.",
+            ))
+            continue
+        if not matched:
+            examples = spec.get("examples") or []
+            problems.append(Problem(
+                "placeholder.shape",
+                f"{name} is {value!r}, which does not look like the exemplars' "
+                f"{name} ({pattern})",
+                ("they look like: " + ", ".join(map(str, examples[:3])))
+                if examples else "loosen or delete the pattern in overrides.yaml.",
+            ))
+    return problems
+
+
 def validate(
     doc: ContentDoc,
     required: set[str] | None = None,
     known_roles: set[str] | None = None,
+    fields: dict[str, dict] | None = None,
 ) -> list[Problem]:
     """Everything wrong with the source, reported at once and before any write."""
     problems: list[Problem] = []
@@ -393,6 +431,8 @@ def validate(
             f"[^{label}]: is defined but never referenced",
             "Word will not render it; remove it or cite it.",
         ))
+
+    problems.extend(_check_field_shapes(doc, fields or {}))
 
     if known_roles is not None:
         for block in doc.walk():

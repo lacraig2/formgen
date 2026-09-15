@@ -283,6 +283,7 @@ def write_profile(
     template_sha: str | None = None,
     generated: str | None = None,
     version: str = "0.1.0",
+    skeleton: Any = None,
 ) -> list[str]:
     """Write every generated artifact. Returns human-readable notes."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -319,6 +320,11 @@ def write_profile(
         "template": {"sha256": template_sha},
         "format": nest(encoded),
         "rules": rules,
+        # The structural half of the profile: which sections every document
+        # has, what text is fixed, and where the fields are. Absent until
+        # `learn` has enough exemplars to align, and that absence is the
+        # honest answer rather than a skeleton inferred from two documents.
+        "skeleton": skeleton.as_json() if skeleton is not None else None,
     })
 
     _json_dump(directory / EVIDENCE, {
@@ -359,8 +365,13 @@ def write_profile(
         render_readme(name, consensus, encoded, outcomes, donor),
         encoding="utf-8",
     )
-    notes = overrides.dump(directory / OVERRIDES) if overrides.pins or \
-        (directory / OVERRIDES).exists() else []
+    # Write overrides.yaml whenever there is something in it to correct --
+    # inferred placeholders included. Their type, pattern and required-ness
+    # are exactly the knobs the file exists for, and a user cannot turn a
+    # knob that is not written down.
+    has_content = bool(overrides.pins or overrides.placeholders)
+    notes = (overrides.dump(directory / OVERRIDES)
+             if has_content or (directory / OVERRIDES).exists() else [])
     return notes
 
 
@@ -476,6 +487,7 @@ class Profile:
     overrides: Overrides = field(default_factory=Overrides)
     corpus: dict = field(default_factory=dict)
     template_sha: str | None = None
+    skeleton: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls, directory: Path) -> Profile:
@@ -488,11 +500,29 @@ class Profile:
             overrides=Overrides.load(directory / OVERRIDES),
             corpus=document.get("corpus") or {},
             template_sha=(document.get("template") or {}).get("sha256"),
+            skeleton=document.get("skeleton") or {},
         )
 
     @property
     def template(self) -> Path:
         return self.directory / TEMPLATE
+
+    def slots(self, kind: str | None = None) -> list[dict]:
+        rows = self.skeleton.get("slots") or []
+        return [r for r in rows if kind is None or r.get("kind") == kind]
+
+    def required_sections(self) -> list[dict]:
+        """Headings in the order the corpus puts them, skipping optional ones.
+
+        Lint checks order against this, and only against the confident part
+        of it: a section present in 60% of exemplars is as likely to be
+        optional as forgotten, and a rule built on that guess fires on
+        documents that are fine.
+        """
+        return [
+            r for r in self.slots()
+            if r.get("heading") and not r.get("optional")
+        ]
 
     def value(self, pointer: str, default: Any = None) -> Any:
         rule = self.rules.get(pointer)

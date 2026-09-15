@@ -190,7 +190,8 @@ def test_direct_formatting_over_a_correct_style_is_still_reported(profile):
         "Prose that ends properly and runs on a bit.", style="BodyText",
         rpr='<w:sz w:val="28"/>',
     )), profile)
-    assert [f.code for f in plan.findings] == ["style.size"]
+    assert [f.code for f in plan.findings if f.code.startswith("style")] == \
+        ["style.size"]
     assert "14pt" in plan.findings[0].message
 
 
@@ -283,7 +284,8 @@ def test_a_missing_header_explains_link_to_previous(profile, tmp_path):
 def test_a_required_placeholder_that_is_absent_is_an_error(profile):
     profile.overrides.placeholders["report_number"] = {"required": True}
     plan = lint(build.make(), profile)
-    assert [f.code for f in plan.findings] == ["placeholder.missing"]
+    codes = [f.code for f in plan.findings if f.code.startswith("placeholder")]
+    assert codes == ["placeholder.missing"]
     assert plan.exit_code == 1
 
 
@@ -296,7 +298,8 @@ def test_a_placeholder_showing_its_prompt_is_not_filled_in(profile):
         "</w:sdtContent></w:sdt>"
     )
     plan = lint(build.make(body=body), profile)
-    assert [f.code for f in plan.findings] == ["placeholder.empty"]
+    codes = [f.code for f in plan.findings if f.code.startswith("placeholder")]
+    assert codes == ["placeholder.empty"]
 
 
 # -- the plan is what apply would do -------------------------------------

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -76,6 +77,8 @@ class EmitReport:
     footnotes: int = 0
     fields: int = 0
     equations: int = 0
+    filled: list[str] = field(default_factory=list)
+    cleared: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -961,19 +964,44 @@ class Emitter:
             if not name.startswith("formgen."):
                 continue
             key = name[len("formgen."):]
-            if key not in doc.meta:
-                continue
             for flag in properties.findall(qn("w:showingPlcHdr")):
                 properties.remove(flag)
-            self._write_into(content, str(doc.meta[key]))
+            if key in doc.meta:
+                self._write_into(content, str(doc.meta[key]))
+                self.report.filled.append(key)
+                continue
+            # No value for this field. The donor is a real report, so the
+            # control still holds *that* report's value -- a number, a
+            # customer name, a reviewer -- and leaving it is how one document
+            # ships carrying another's identity. Clear it.
+            self._write_into(content, "")
+            self.report.cleared.append(key)
 
     def _write_into(self, content: etree._Element, value: str) -> None:
-        paragraph = content.find(f".//{qn('w:p')}")
-        if paragraph is None:
-            paragraph = etree.SubElement(content, qn("w:p"))
-        for run in paragraph.findall(qn("w:r")):
-            paragraph.remove(run)
-        paragraph.append(self._run(value))
+        """Replace a control's content, keeping the look the donor gave it.
+
+        A control is block-level (its `w:sdtContent` holds paragraphs) or
+        inline (it holds runs, inside a paragraph of its own). Writing a
+        `w:p` into an inline one produces a file Word offers to repair, so
+        the two cases are genuinely different and both have to be handled.
+
+        The donor's own `w:rPr` is carried onto the new run. The house format
+        may well set the report number in bold small caps, and that is part
+        of the format, not part of the value it happened to hold.
+        """
+        host = content.find(qn("w:p"))
+        inline = host is None
+        if inline:
+            host = content
+        template = host.find(qn("w:r"))
+        properties = deepcopy(template.find(qn("w:rPr"))) \
+            if template is not None else None
+        for run in host.findall(qn("w:r")):
+            host.remove(run)
+        run = self._run(value)
+        if properties is not None:
+            run.insert(0, properties)
+        host.append(run)
 
 
 def emit(

@@ -88,7 +88,12 @@ def learn(ctx, exemplars, out, name, as_json):
             "enforced": len(result.consensus.enforceable()),
             "needs_review": result.needs_review,
             "warnings": list(result.consensus.warnings),
+            "skeleton": (result.skeleton.as_json()
+                         if result.skeleton is not None else None),
+            "unconfident": [s.name for s in result.unconfident],
         }, indent=2, sort_keys=True))
+        if result.unconfident:
+            raise SystemExit(1)
         return
 
     consensus = result.consensus
@@ -111,7 +116,25 @@ def learn(ctx, exemplars, out, name, as_json):
         console.write(f"  donor: {result.donor.explain()}")
     if result.scrub_report:
         console.write(f"  scrub: {result.scrub_report.summary()}")
+    if result.skeleton is not None:
+        skeleton = result.skeleton
+        console.write(
+            f"  structure: {len(skeleton.required_sections)} required "
+            f"section(s), {len(skeleton.boilerplate)} fixed passage(s), "
+            f"{len(skeleton.placeholders)} placeholder(s)"
+        )
+        if result.materialized and result.materialized.wrapped:
+            console.write(
+                f"  {len(result.materialized.wrapped)} placeholder(s) written "
+                "into template.docx as content controls"
+            )
     console.blank()
+
+    if result.skeleton is not None and result.skeleton.placeholders:
+        console.write("PLACEHOLDERS")
+        for slot in result.skeleton.placeholders:
+            console.write(f"  {slot.describe()}")
+        console.blank()
 
     for warning in consensus.warnings:
         console.bullet(warning)
@@ -128,9 +151,25 @@ def learn(ctx, exemplars, out, name, as_json):
         if len(review) > 10:
             console.write(f"  ... {len(review) - 10} more; see README.md")
         console.blank()
+    unconfident = result.unconfident
+    if unconfident:
+        # The artifacts are written either way -- refusing to write them
+        # would leave nothing to correct. The exit code is what forces a
+        # human through this review exactly once instead of never.
+        console.write(f"CONFIRM THESE NAMES ({len(unconfident)})")
+        for slot in unconfident:
+            console.write(f"  {slot.name}: guessed from {slot.name_source}")
+            if slot.examples:
+                console.write(f"    e.g. {', '.join(slot.examples[:3])}")
+        console.write(
+            "  Open template.docx in Word, Developer tab, and check each "
+            "control's tag; then run `formgen profile sync`."
+        )
+        console.blank()
+
     console.write("Open template.docx in Word to correct it, then run:")
     console.write(f"  formgen profile sync {result.directory}")
-    if result.needs_review:
+    if result.needs_review or unconfident:
         raise SystemExit(1)
 
 
@@ -291,8 +330,13 @@ def new(ctx, source, profile_dir, out, overrides, allow_missing, cover):
         doc = parse(text)
         doc.meta.update(_parse_set(overrides))
         required = profile.required_placeholders()
-        problems = validate(doc, required=required)
-        blocking = [p for p in problems if p.code != "footnote.unused"]
+        problems = validate(doc, required=required, fields=profile.placeholders)
+        # A shape mismatch is reported, never blocking: the pattern came from
+        # a handful of exemplars, and the first report with a genuinely new
+        # numbering scheme has to be publishable.
+        advisory = {"footnote.unused", "placeholder.shape",
+                    "placeholder.bad_pattern"}
+        blocking = [p for p in problems if p.code not in advisory]
 
         if blocking and not allow_missing:
             console.write(f"{Path(source).name}: cannot render")
@@ -327,11 +371,19 @@ def new(ctx, source, profile_dir, out, overrides, allow_missing, cover):
 
     console.write(f"{Path(source).name} -> {destination}")
     console.write(f"  {report.summary()}")
+    if report.filled or report.cleared:
+        console.write(
+            f"  fields: {len(report.filled)} filled"
+            + (f", {len(report.cleared)} cleared (the template carried the "
+               "donor's own values)" if report.cleared else "")
+        )
     for warning in doc.warnings + report.warnings:
         console.bullet(warning)
     for problem in problems:
-        if problem.code == "footnote.unused":
+        if problem.code in advisory:
             console.bullet(problem.message)
+            if problem.remedy:
+                console.write(f"    {problem.remedy}")
     if report.fields:
         console.write(
             "  fields were inserted unpopulated; press F9 in Word (or re-run "
@@ -628,6 +680,110 @@ def inspect(ctx, document):
         for reason in meta.disqualified:
             console.bullet(reason)
         raise SystemExit(3)
+
+
+# -- explain --------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("document", type=DOCX)
+@click.option("--at", "needle", required=True, metavar="TEXT",
+              help="Any distinctive words from the block, as you would type "
+                   "them into Word's Find box.")
+@click.option("--profile", "-p", "profile_dir", default=None,
+              type=click.Path(exists=True, file_okay=False, path_type=str),
+              help="Judge the block against this profile as well.")
+@click.pass_context
+def explain(ctx, document, needle, profile_dir):
+    """Show why one block was classified the way it was.
+
+    Prints the block's features, every signal that fired with its weight, the
+    winning role, the runners-up, and what `apply` would do to it.
+    """
+    from .classify.features import build_context
+    from .classify.rules import classify_block, signals_for
+    from .oox.walk import match_key
+
+    console = _console(ctx)
+    try:
+        pkg = OpcPackage.open(Path(document))
+    except PackageError as exc:
+        _fail(console, InputError(f"{Path(document).name}: {exc}"))
+        return
+
+    profile = pio.Profile.load(Path(profile_dir)) if profile_dir else None
+    ctxd = build_context(pkg)
+    wanted = match_key(needle).lower()
+    hits = [f for f in ctxd.features
+            if f.is_paragraph and wanted in match_key(f.text).lower()]
+    if not hits:
+        _fail(console, UsageError(
+            f"nothing in {Path(document).name} contains {needle!r}",
+            "use words you can see in Word's Find box; matching ignores "
+            "smart quotes, dashes and repeated spaces.",
+        ))
+        return
+    if len(hits) > 1:
+        console.write(f"{len(hits)} blocks match {needle!r}; showing the first.")
+        console.write("  Add more words to narrow it down.")
+        console.blank()
+
+    features = hits[0]
+    known = profile.style_names if profile else None
+    placeholders = set(profile.placeholders) if profile else None
+    result = classify_block(features, ctxd, known, placeholders)
+
+    console.write(f"{Path(document).name}  {features.path}")
+    console.write(f"  text: {features.text[:80]!r}")
+    console.write(
+        f"  style: {features.style_name or '(none)'}"
+        f"  size: {features.run.size or '(inherited)'}"
+        f"  font: {features.font or '(inherited)'}"
+    )
+    console.write(
+        f"  {features.words} word(s), "
+        f"outline level {features.outline_level if features.outline_level is not None else '-'}, "
+        f"numbering {'yes' if features.numbering else 'no'}"
+    )
+    if ctxd.modal_size:
+        console.write(
+            f"  this document's body text is {ctxd.modal_size} "
+            f"{ctxd.modal_font or ''}".rstrip()
+        )
+    console.blank()
+
+    console.write("SIGNALS")
+    signals = sorted(signals_for(features, ctxd, known, placeholders),
+                     key=lambda s: (-s.weight, s.role))
+    if not signals:
+        console.bullet("none fired; the block falls through to body text.")
+    for signal in signals:
+        kind = "floor" if signal.prior else "evidence"
+        console.write(f"  {signal.weight:.2f} {signal.role:<14} "
+                      f"[{kind}] {signal.evidence}")
+    console.blank()
+
+    console.write(f"ROLE: {result.role} ({result.confidence:.0%})")
+    if result.alternatives:
+        console.write("  runners-up: " + ", ".join(
+            f"{role} {score:.0%}" for role, score in result.alternatives))
+    if result.needs_review:
+        console.write("  below the review threshold -- `apply` would leave "
+                      "this block alone unless you confirm it.")
+    if profile is not None:
+        from .plan.builder import _role_to_style
+
+        style = _role_to_style(profile).get(result.role)
+        console.blank()
+        console.write("AGAINST THE PROFILE")
+        console.write(
+            f"  {profile.name} puts {result.role} in "
+            + (f"the {style!r} style" if style
+               else "no style -- it defines none for this role")
+        )
+        if style and features.style_name != style:
+            console.write(f"  this block is {features.style_name or '(none)'}, "
+                          f"so `apply` would restyle it.")
 
 
 def main() -> None:  # pragma: no cover - console entry point

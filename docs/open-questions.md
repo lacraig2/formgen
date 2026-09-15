@@ -100,3 +100,38 @@ first-page, even-page and default headers and again for the three footers.
 ECMA 17.6.12 does not state the inheritance rule at all -- it is entirely
 implementation behaviour. Pinned by
 `test_headers_and_footers_inherit_independently`.
+
+## 8. Is a repeated paragraph boilerplate, or a small corpus?
+
+Nothing in the text distinguishes "every exemplar carries this distribution
+statement because the format requires it" from "three exemplars happen to
+open their Introduction the same way". The consequences are very different:
+the first should be enforced word for word, the second must not be, or the
+linter tells every author their Introduction is wrong.
+
+We decided on **position**, not text: fixed wording is enforced in the front
+matter -- before the first heading -- and never under a heading, and never for
+a title. That is where real boilerplate lives (cover, distribution statement,
+classification marking), and it is also the region `new` carries verbatim out
+of the donor, so generated documents stay clean by construction.
+
+It is a heuristic and it will be wrong for a house format whose boilerplate
+sits mid-document -- a standard safety notice before the Methods section, say.
+The remedy is the same as everywhere else: the passage still appears in
+`profile.json` with its coverage, and `overrides.yaml` can raise its severity.
+
+## 9. Why does a missing required section only warn?
+
+Because nothing in formgen can add one. `apply` reformats what is in front of
+it and cannot write a Methods section; `new` renders the Markdown it was
+given. An error that no command can clear is one people learn to ignore, and
+it would break the `lint(apply(x))` fixed point for no gain. Altered
+boilerplate *is* an error, because somebody had the passage and changed it.
+
+## 10. Optional, or forgotten?
+
+Undecidable, and we say so rather than guessing. A column present in 40-75% of
+the corpus is marked `needs_review` with the reason spelled out; one below 40%
+is not part of the skeleton at all. The only way to settle it is a human
+looking at `template.docx`, which is why the profile build fails once until
+somebody does.

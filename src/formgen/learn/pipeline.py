@@ -22,7 +22,10 @@ from ..profile import io as pio
 from ..profile.sync import placeholders_in
 from .consensus import Consensus, build
 from .donor import DonorScore, ScrubReport, rank, scrub
+from .materialize import MaterializeReport, materialize
 from .observe import DocObservations, observe
+from .placeholders import SkeletonProfile, classify as classify_slots
+from .skeleton import properties_for, skeleton_for
 
 
 @dataclass
@@ -34,11 +37,24 @@ class LearnResult:
     donor: DonorScore | None = None
     scrub_report: ScrubReport | None = None
     template_sha: str | None = None
+    skeleton: SkeletonProfile | None = None
+    materialized: MaterializeReport | None = None
     notes: list[str] = field(default_factory=list)
 
     @property
     def needs_review(self) -> int:
         return len(self.consensus.needs_review())
+
+    @property
+    def unconfident(self) -> list:
+        """Required placeholders whose name is a guess.
+
+        A non-empty list fails the build. The artifacts are still written --
+        refusing to write them would leave nothing to correct -- but the exit
+        code forces a human through the review exactly once, rather than
+        never.
+        """
+        return self.skeleton.unconfident if self.skeleton else []
 
 
 def _doc_ids(paths: Sequence[Path]) -> list[str]:
@@ -101,17 +117,35 @@ def learn(
     donor_pkg = OpcPackage.open(source)
     result.scrub_report = scrub(donor_pkg)
 
+    # The skeleton pass runs on the *scrubbed* donor rather than the original,
+    # so that the block indices the alignment records still address the same
+    # paragraphs when the placeholders are written back into it.
+    # Load the corrections before inferring, not after: a field the user has
+    # already named must keep that name, or re-learning with a bigger corpus
+    # silently undoes their work.
+    overrides = pio.Overrides.load(directory / pio.OVERRIDES)
+    result.skeleton, result.materialized = _infer_skeleton(
+        paths, observations, best.doc, donor_pkg, overrides.placeholders)
+
     directory.mkdir(parents=True, exist_ok=True)
     template = directory / pio.TEMPLATE
     donor_pkg.save(template, deterministic=True)
     result.template_sha = pio.sha256_of(template)
 
-    overrides = pio.Overrides.load(directory / pio.OVERRIDES)
     # Content controls already in the donor ARE placeholders; record them now
     # so the very first sync has something to diff against rather than
     # reporting every one of them as newly added.
+    # Inference goes in first: it is the only source that knows a field's
+    # type, its pattern and whether it is required. The donor scan then fills
+    # in what it alone knows -- the control's tag and Word-facing label --
+    # and adds any control a user inserted by hand that inference missed.
+    if result.skeleton is not None:
+        for pname, entry in result.skeleton.as_overrides().items():
+            overrides.placeholders.setdefault(pname, {}).update(entry)
     for pname, entry in placeholders_in(donor_pkg).items():
-        overrides.placeholders.setdefault(pname, entry)
+        known = overrides.placeholders.setdefault(pname, {})
+        for key, value in entry.items():
+            known.setdefault(key, value)
 
     result.notes = pio.write_profile(
         directory=directory,
@@ -122,9 +156,45 @@ def learn(
         donor=best,
         template_sha=result.template_sha,
         generated=generated,
+        skeleton=result.skeleton,
     )
     result.notes.extend(_donor_notes(donor_pkg, consensus))
+    if result.skeleton is not None:
+        result.notes.extend(result.skeleton.warnings)
+        note = result.materialized.note() if result.materialized else None
+        if note:
+            result.notes.append(note)
     return result
+
+
+MIN_CORPUS_FOR_SKELETON = 3
+
+
+def _infer_skeleton(paths, observations, donor_doc, donor_pkg, known=None):
+    """Align the corpus and classify the columns.
+
+    Below three exemplars there is nothing to align: two documents agree on
+    everything they share, so every column comes out either boilerplate or a
+    field, and both answers are noise. Saying "not enough documents" is the
+    honest result.
+    """
+    docs = [o.doc for o in observations]
+    if len(docs) < MIN_CORPUS_FOR_SKELETON:
+        return None, None
+
+    corpus: dict[str, OpcPackage] = {}
+    properties: dict[str, dict[str, str]] = {}
+    for path, doc in zip(paths, docs):
+        pkg = donor_pkg if doc == donor_doc else OpcPackage.open(path)
+        corpus[doc] = pkg
+        properties[doc] = properties_for(pkg)
+
+    contexts: dict = {}
+    aligned = skeleton_for(corpus, contexts)
+    profile = classify_slots(aligned, properties=properties, donor=donor_doc,
+                             known=known)
+    report = materialize(contexts[donor_doc], profile, donor_doc)
+    return profile, report
 
 
 def _donor_notes(pkg: OpcPackage, consensus: Consensus) -> list[str]:

@@ -18,6 +18,8 @@ from formgen.opc.ns import RT, qn
 from formgen.opc.package import OpcPackage
 from formgen.plan.builder import build_plan
 from formgen.profile.io import Profile
+from formgen.oox.walk import Walker
+from formgen.profile import io as pio
 from formgen.safety.verify import check_integrity
 
 
@@ -560,3 +562,66 @@ def test_extract_writes_markdown_and_images(tmp_path):
     text = (tmp_path / "back.md").read_text()
     assert "![" in text and ".media/" in text
     assert (tmp_path / "back.media").exists()
+
+
+# -- the cover page ------------------------------------------------------
+
+
+def _cover_corpus(directory, n=4):
+    directory.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        build.make(
+            build.para("Thermal Margin Analysis", style="Title")
+            + build.para("Distribution Statement A: approved for public "
+                         "release.", style="BodyText")
+            + build.para(f"Report No. LR-202{i}-0041", style="BodyText")
+            + build.para("Introduction", style="Heading1")
+            + build.para("The X-7 radiator exceeds its design margin.",
+                         style="BodyText")
+        ).save(directory / f"r{i}.docx", deterministic=True)
+    return sorted(directory.glob("*.docx"))
+
+
+@pytest.fixture
+def cover_profile(tmp_path):
+    learn(_cover_corpus(tmp_path / "corpus"), tmp_path / "cp", generated="x")
+    return pio.Profile.load(tmp_path / "cp")
+
+
+def _texts(package):
+    return [b.text for b in Walker(package).blocks(include_aux=False)
+            if b.text.strip()]
+
+
+def test_front_matter_fills_the_learned_cover(cover_profile, tmp_path):
+    doc = parse("---\nreport_no: LR-2027-0009\n---\n\n# Introduction\n\nProse.\n")
+    package, report = emit(doc, cover_profile.template)
+    assert "Report No. LR-2027-0009" in _texts(package)
+    assert report.filled == ["report_no"]
+
+
+def test_an_unfilled_field_never_keeps_the_donor_s_own_value(cover_profile):
+    """The donor is a real report. Left alone, its control still holds that
+    report's number, and one document ships carrying another's identity."""
+    package, report = emit(parse("# Introduction\n\nProse.\n"),
+                           cover_profile.template)
+    assert "Report No. LR-2020-0041" not in _texts(package)
+    assert report.cleared == ["report_no"]
+
+
+def test_a_filled_field_keeps_the_formatting_the_donor_gave_it(cover_profile):
+    doc = parse("---\nreport_no: LR-2027-0009\n---\n\n# Introduction\n\nP.\n")
+    package, _ = emit(doc, cover_profile.template)
+    body = package.element(package.main_document)
+    sdt = next(s for s in body.iter(qn("w:sdt")))
+    run = sdt.find(f"{qn('w:sdtContent')}/{qn('w:r')}")
+    assert run is not None                      # inline, not a stray w:p
+    assert run.find(qn("w:t")).text == "LR-2027-0009"
+
+
+def test_a_value_of_the_wrong_shape_is_reported_but_does_not_block(cover_profile):
+    doc = parse("---\nreport_no: 12\n---\n\n# Introduction\n\nProse.\n")
+    problems = validate(doc, required=cover_profile.required_placeholders(),
+                        fields=cover_profile.placeholders)
+    shape = [p for p in problems if p.code == "placeholder.shape"]
+    assert shape and "LR-20" in shape[0].remedy

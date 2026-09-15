@@ -178,3 +178,92 @@ def test_table_columns_line_up():
 
     Console(Sink()).table([("a", "1"), ("longer", "22")], ("name", "n"))
     assert lines == ["name    n", "------  --", "a       1", "longer  22"]
+
+
+# -- explain --------------------------------------------------------------
+
+
+def test_explain_shows_the_signals_and_the_winner(runner, tmp_path):
+    path = tmp_path / "doc.docx"
+    build.make().save(path)
+    result = run(runner, "explain", str(path), "--at", "Introduction")
+    assert result.exit_code == 0, result.output
+    assert "SIGNALS" in result.output
+    assert "ROLE: heading1" in result.output
+    assert "outline level" in result.output
+
+
+def test_explain_matches_the_way_words_find_box_does(runner, tmp_path):
+    """Smart quotes and doubled spaces must not stop a paste from matching."""
+    path = tmp_path / "doc.docx"
+    build.make(body=build.para("The panel’s  margin was measured.")).save(path)
+    result = run(runner, "explain", str(path), "--at", "The panel's margin")
+    assert result.exit_code == 0, result.output
+
+
+def test_explain_says_so_when_the_text_matches_nothing(runner, tmp_path):
+    path = tmp_path / "doc.docx"
+    build.make().save(path)
+    result = run(runner, "explain", str(path), "--at", "not in this document")
+    assert result.exit_code == 2
+    assert "Find box" in result.output
+
+
+def test_explain_compares_against_a_profile_when_given_one(runner, tmp_path):
+    run(runner, "learn", *corpus(tmp_path / "c"), "-o", str(tmp_path / "p"))
+    path = tmp_path / "doc.docx"
+    build.make(body=build.para("Some prose that runs on for a few words.")).save(path)
+    result = run(runner, "explain", str(path), "--at", "Some prose",
+                 "-p", str(tmp_path / "p"))
+    assert result.exit_code == 0, result.output
+    assert "AGAINST THE PROFILE" in result.output
+    assert "restyle" in result.output
+
+
+# -- learn: structure -----------------------------------------------------
+
+
+def varied_corpus(tmp_path, n=4):
+    """Exemplars that share a format but not their field values."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    out = []
+    for i in range(n):
+        body = (
+            build.para("Thermal Margin Analysis", style="Title")
+            + build.para("Distribution Statement A: approved for public "
+                         "release.", style="BodyText")
+            + build.para(f"Report No. LR-202{i}-0041", style="BodyText")
+            + build.para("Introduction", style="Heading1")
+            + build.para("The X-7 radiator exceeds its design margin.",
+                         style="BodyText")
+        )
+        path = tmp_path / f"report{i}.docx"
+        build.make(body).save(path, deterministic=True)
+        out.append(str(path))
+    return out
+
+
+def test_learn_reports_the_structure_it_found(runner, tmp_path):
+    result = run(runner, "learn", *varied_corpus(tmp_path / "c"),
+                 "-o", str(tmp_path / "p"))
+    assert "structure:" in result.output
+    assert "PLACEHOLDERS" in result.output
+    assert "content controls" in result.output
+
+
+def test_a_guessed_placeholder_name_fails_the_build_but_writes_it(runner, tmp_path):
+    """A human is forced through this review exactly once, rather than never."""
+    result = run(runner, "learn", *varied_corpus(tmp_path / "c"),
+                 "-o", str(tmp_path / "p"))
+    assert result.exit_code == 1, result.output
+    assert "CONFIRM THESE NAMES" in result.output
+    assert (tmp_path / "p" / pio.PROFILE).exists()
+    assert (tmp_path / "p" / pio.TEMPLATE).exists()
+
+
+def test_learn_json_carries_the_skeleton(runner, tmp_path):
+    result = run(runner, "learn", "--json", *varied_corpus(tmp_path / "c"),
+                 "-o", str(tmp_path / "p"))
+    payload = json.loads(result.output)
+    assert payload["skeleton"]["slots"]
+    assert payload["unconfident"]
