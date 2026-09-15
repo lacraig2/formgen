@@ -16,9 +16,10 @@ import json
 from pathlib import Path
 
 import click
+import yaml
 
 from .errors import (
-    FormgenError, InputError, InvariantError, UsageError,
+    FormgenError, InputError, InvariantError, RefusalError, UsageError,
 )
 from .learn.pipeline import learn as run_learn
 from .opc.errors import PackageError
@@ -628,6 +629,129 @@ def doctor(ctx, target, pdf, timeout):
     if report.skipped:
         return
     if not report.ok:
+        raise SystemExit(1)
+
+
+# -- fill -----------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("document", type=DOCX, required=False)
+@click.option("--profile", "-p", "profile_dir", default=None,
+              type=click.Path(exists=True, file_okay=False, path_type=str),
+              help="Fill this profile's template.docx instead of a document.")
+@click.option("--values", "values_file", default=None,
+              type=click.Path(exists=True, dir_okay=False, path_type=str),
+              help="YAML or JSON file of field values.")
+@click.option("--set", "overrides", multiple=True, metavar="KEY=VALUE",
+              help="Set one field. Repeatable.")
+@click.option("--out", "-o", type=click.Path(dir_okay=False, path_type=str),
+              default=None, help="Output .docx (default: <stem>.filled.docx).")
+@click.option("--keep-unsupplied", is_flag=True,
+              help="Leave fields you said nothing about as they are. "
+                   "Refuses on a template, which holds the donor's own values.")
+@click.option("--list", "list_only", is_flag=True,
+              help="List the fields and change nothing.")
+@click.pass_context
+def fill(ctx, document, profile_dir, values_file, overrides, out,
+         keep_unsupplied, list_only):
+    """Fill a form's fields, keeping everything else exactly as it is.
+
+    `new` renders Markdown into a template: it replaces the body, because for
+    a report the body is the author's work. A form is the other way round --
+    the labels, the table and the layout *are* the document and the values
+    are the small part -- so this keeps all of it and changes only the fields.
+    """
+    from .content.fill import fill as run_fill
+    from .learn.formfields import find_fields
+    from .safety import guards
+    from .safety.verify import check_integrity
+
+    console = _console(ctx)
+    if not document and not profile_dir:
+        _fail(console, UsageError("give a document or a --profile to fill"))
+        return
+    source = Path(document) if document else \
+        pio.Profile.load(Path(profile_dir)).template
+    if not source.exists():
+        _fail(console, UsageError(f"{source} does not exist"))
+        return
+
+    try:
+        pkg = OpcPackage.open(source)
+    except PackageError as exc:
+        _fail(console, InputError(f"{source.name}: {exc}"))
+        return
+
+    if list_only:
+        report = find_fields(pkg)
+        console.write(f"{source.name}: {len(report.fields)} field(s)")
+        for item in report.fields:
+            mark = "x" if item.filled else " "
+            console.write(f"  [{mark}] {item.describe()}")
+        if not report.fields:
+            console.write("  none. This document declares no fields; learn a "
+                          "profile from several like it and the comparator "
+                          "will find what varies.")
+        return
+
+    values: dict = {}
+    if values_file:
+        text = Path(values_file).read_text(encoding="utf-8-sig")
+        loaded = yaml.safe_load(text) or {}
+        if not isinstance(loaded, dict):
+            _fail(console, UsageError(f"{values_file} is not a mapping"))
+            return
+        values.update(loaded)
+    values.update(_parse_set(overrides))
+    if not values:
+        _fail(console, UsageError(
+            "no values given",
+            "pass --values FILE or --set key=value, or use --list to see "
+            "what this document's fields are called.",
+        ))
+        return
+
+    if keep_unsupplied and not document:
+        _fail(console, RefusalError(
+            "--keep-unsupplied on a profile template would ship the donor's "
+            "own values",
+            "template.docx is a byte-faithful copy of a real document, so "
+            "the fields you do not set still hold that document's answers. "
+            "Fill a copy of your own document instead, or set every field.",
+        ))
+        return
+
+    destination = Path(out) if out else \
+        source.with_name(f"{source.stem}.filled{source.suffix}")
+    try:
+        guards.check_writable(destination)
+        report = run_fill(pkg, values, keep_unsupplied=keep_unsupplied)
+        faults = check_integrity(pkg)
+        if faults:
+            _fail(console, InvariantError(
+                "the filled document failed its structural checks, so nothing "
+                "was written:\n    " + "\n    ".join(faults[:6])))
+            return
+        pkg.save(destination, deterministic=True)
+    except FormgenError as exc:
+        _fail(console, exc)
+        return
+
+    console.write(f"{source.name} -> {destination}")
+    console.write(f"  {report.summary()}")
+    if report.unknown:
+        console.write(
+            f"  {len(report.unknown)} value(s) matched no field: "
+            + ", ".join(report.unknown[:6])
+        )
+        console.write("    run with --list to see what the fields are called.")
+    if report.cleared:
+        console.write(
+            f"  {len(report.cleared)} field(s) cleared -- they held the "
+            "original document's values and you gave none."
+        )
+    if report.unknown:
         raise SystemExit(1)
 
 

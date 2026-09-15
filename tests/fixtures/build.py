@@ -166,8 +166,13 @@ SECT_PR = (
 
 
 def para(text: str = "", *, style: str | None = None, ppr_extra: str = "",
-         rpr: str = "", numid: int | None = None, ilvl: int = 0) -> str:
-    """One <w:p>. `rpr` applies direct run formatting to the whole paragraph."""
+         rpr: str = "", numid: int | None = None, ilvl: int = 0,
+         runs: str = "") -> str:
+    """One <w:p>. `rpr` applies direct run formatting to the whole paragraph.
+
+    `runs` is raw run-level XML appended after the text run -- form fields,
+    content controls, anything a fixture needs to hold inside a paragraph.
+    """
     bits = []
     if style:
         bits.append(f'<w:pStyle w:val="{style}"/>')
@@ -176,7 +181,7 @@ def para(text: str = "", *, style: str | None = None, ppr_extra: str = "",
     bits.append(ppr_extra)
     ppr = f"<w:pPr>{''.join(bits)}</w:pPr>" if any(bits) else ""
     run = f'<w:r>{f"<w:rPr>{rpr}</w:rPr>" if rpr else ""}<w:t xml:space="preserve">{text}</w:t></w:r>' if text else ""
-    return f"<w:p>{ppr}{run}</w:p>"
+    return f"<w:p>{ppr}{run}{runs}</w:p>"
 
 
 def document(body: str, sect_pr: str | None = None) -> str:
@@ -289,3 +294,41 @@ def add_hdrftr(pkg, kind: str, name: str, text: str = "") -> str:
     )
     pkg.add_part(f"word/{name}", xml.encode(), HDRFTR_CT[kind])
     return pkg.relate(RT[kind], f"word/{name}", pkg.main_document)
+
+
+def form_text(name: str = "Text1", result: str = "", default: str | None = None) -> str:
+    """A legacy FORMTEXT field: begin+ffData, instruction, separate, result, end."""
+    dflt = f'<w:default w:val="{default}"/>' if default is not None else ""
+    return (
+        "<w:r><w:fldChar w:fldCharType=\"begin\">"
+        f'<w:ffData><w:name w:val="{name}"/><w:enabled/>'
+        f"<w:textInput>{dflt}</w:textInput></w:ffData>"
+        "</w:fldChar></w:r>"
+        "<w:r><w:instrText xml:space=\"preserve\"> FORMTEXT </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>"
+        f'<w:r><w:t xml:space="preserve">{result or chr(0x2002) * 5}</w:t></w:r>'
+        "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+    )
+
+
+def form_checkbox(name: str = "Check1", checked: bool = False) -> str:
+    state = '<w:checked/>' if checked else '<w:checked w:val="0"/>'
+    return (
+        "<w:r><w:fldChar w:fldCharType=\"begin\">"
+        f'<w:ffData><w:name w:val="{name}"/><w:enabled/>'
+        f"<w:checkBox><w:sizeAuto/>{state}</w:checkBox></w:ffData>"
+        "</w:fldChar></w:r>"
+        "<w:r><w:instrText xml:space=\"preserve\"> FORMCHECKBOX </w:instrText></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>"
+        "<w:r><w:t> </w:t></w:r>"
+        "<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+    )
+
+
+def cell(*paragraphs: str) -> str:
+    return "<w:tc><w:tcPr/>" + "".join(paragraphs) + "</w:tc>"
+
+
+def table(*rows: str) -> str:
+    return ("<w:tbl><w:tblPr/><w:tblGrid/>"
+            + "".join(f"<w:tr>{r}</w:tr>" for r in rows) + "</w:tbl>")

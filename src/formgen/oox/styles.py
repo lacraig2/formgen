@@ -15,13 +15,14 @@ expensive traps live:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from lxml import etree
 
 from ..opc.ns import qn
 from .props import ParaProps, RunProps, finalize, fold
 from .theme import Theme
+from .values import FontSize
 
 
 def normalize_style_name(name: str) -> str:
@@ -94,6 +95,21 @@ class EffectiveStyle:
     color_is_themed: bool = False # colour came via w:themeColor
 
 
+# Word's application default, used when the document specifies a size
+# nowhere -- not in docDefaults, not on Normal, not on the run. This is
+# common: pre-2007 documents converted forward, and anything written by a
+# minimal generator, simply omit it.
+#
+# It matters more than the 10pt is worth being right about. Every relative
+# heuristic in the classifier is a ratio against the document's own body
+# size, and with no size anywhere that ratio has no denominator: on a real
+# clinical protocol, five words that carried a size outvoted six hundred and
+# eighty-six that did not, and the document was read as 18pt throughout.
+# Anchoring the inheritance root is what makes "this paragraph is 1.5x the
+# body" a question with an answer.
+IMPLICIT_SIZE = FontSize(20)
+
+
 class StyleGraph:
     """Parsed styles.xml with inheritance resolution."""
 
@@ -138,6 +154,8 @@ class StyleGraph:
             ppr_default = docdefaults.find(f"{qn('w:pPrDefault')}/{qn('w:pPr')}")
             default_run = RunProps.parse(rpr_default)
             default_para = ParaProps.parse(ppr_default)
+        if default_run.size is None:
+            default_run = replace(default_run, size=IMPLICIT_SIZE)
 
         latent: dict[str, dict] = {}
         latent_el = root.find(qn("w:latentStyles"))

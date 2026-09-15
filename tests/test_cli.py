@@ -267,3 +267,95 @@ def test_learn_json_carries_the_skeleton(runner, tmp_path):
     payload = json.loads(result.output)
     assert payload["skeleton"]["slots"]
     assert payload["unconfident"]
+
+
+# -- fill -----------------------------------------------------------------
+
+
+def form_doc(tmp_path, passport=""):
+    body = (
+        build.para("VISA APPLICATION FORM")
+        + build.table(
+            build.cell(build.para("07 -   Passport #")),
+            build.cell(build.para("", runs=build.form_text("Text42", passport))),
+        )
+        + build.para("", runs=(
+            build.form_checkbox("Check1") + '<w:r><w:t>male</w:t></w:r>'))
+    )
+    path = tmp_path / "form.docx"
+    build.make(body).save(path, deterministic=True)
+    return path
+
+
+def test_fill_lists_the_fields_without_changing_anything(runner, tmp_path):
+    path = form_doc(tmp_path)
+    result = run(runner, "fill", str(path), "--list")
+    assert result.exit_code == 0, result.output
+    assert "passport" in result.output and "male" in result.output
+    assert not (tmp_path / "form.filled.docx").exists()
+
+
+def test_fill_writes_the_values_and_keeps_the_form(runner, tmp_path):
+    path = form_doc(tmp_path)
+    result = run(runner, "fill", str(path), "--set", "passport=PT-4471902",
+                 "--set", "male=yes")
+    assert result.exit_code == 0, result.output
+    assert "2 field(s) filled" in result.output
+    out = tmp_path / "form.filled.docx"
+    assert out.exists()
+    from formgen.oox.walk import Walker
+    from formgen.opc.package import OpcPackage
+    text = "\n".join(b.text for b in Walker(OpcPackage.open(out)).blocks())
+    assert "VISA APPLICATION FORM" in text and "PT-4471902" in text
+
+
+def test_fill_says_which_values_matched_nothing(runner, tmp_path):
+    path = form_doc(tmp_path)
+    result = run(runner, "fill", str(path), "--set", "passport=x",
+                 "--set", "nosuchfield=y")
+    assert result.exit_code == 1
+    assert "nosuchfield" in result.output
+    assert "--list" in result.output
+
+
+def test_fill_needs_something_to_write(runner, tmp_path):
+    result = run(runner, "fill", str(form_doc(tmp_path)))
+    assert result.exit_code == 2
+    assert "--set" in result.output
+
+
+def test_fill_reads_values_from_a_file(runner, tmp_path):
+    path = form_doc(tmp_path)
+    values = tmp_path / "v.yaml"
+    values.write_text("passport: PT-4471902\nmale: true\n", encoding="utf-8")
+    result = run(runner, "fill", str(path), "--values", str(values))
+    assert result.exit_code == 0, result.output
+    assert "2 field(s) filled" in result.output
+
+
+def test_fill_refuses_to_keep_a_templates_own_values(runner, tmp_path):
+    """template.docx is a real document. --keep-unsupplied there would ship
+    the donor's answers under somebody else's name."""
+    run(runner, "learn", *varied_corpus(tmp_path / "c"), "-o", str(tmp_path / "p"))
+    result = run(runner, "fill", "-p", str(tmp_path / "p"), "--keep-unsupplied",
+                 "--set", "report_no=LR-2099-0001")
+    assert result.exit_code == 3
+    assert "byte-faithful" in result.output
+
+
+def test_fill_works_on_placeholders_the_comparator_found(runner, tmp_path):
+    """A report declares no fields. The comparator finds what varies, learn
+    writes those into the template as controls, and they fill like any other."""
+    run(runner, "learn", *varied_corpus(tmp_path / "c"), "-o", str(tmp_path / "p"))
+    listed = run(runner, "fill", "-p", str(tmp_path / "p"), "--list")
+    assert "report_no" in listed.output
+
+    out = tmp_path / "filled.docx"
+    result = run(runner, "fill", "-p", str(tmp_path / "p"),
+                 "--set", "report_no=LR-2099-0001", "-o", str(out))
+    assert result.exit_code == 0, result.output
+    from formgen.oox.walk import Walker
+    from formgen.opc.package import OpcPackage
+    text = "\n".join(b.text for b in Walker(OpcPackage.open(out)).blocks())
+    assert "LR-2099-0001" in text
+    assert "Thermal Margin Analysis" in text     # the document is still there

@@ -22,6 +22,7 @@ from ..profile import io as pio
 from ..profile.sync import placeholders_in
 from .consensus import Consensus, build
 from .donor import DonorScore, ScrubReport, rank, scrub
+from .formfields import FormReport, find_fields
 from .materialize import MaterializeReport, materialize
 from .observe import DocObservations, observe
 from .placeholders import SkeletonProfile, classify as classify_slots
@@ -39,11 +40,19 @@ class LearnResult:
     template_sha: str | None = None
     skeleton: SkeletonProfile | None = None
     materialized: MaterializeReport | None = None
+    declared: FormReport | None = None
     notes: list[str] = field(default_factory=list)
 
     @property
     def needs_review(self) -> int:
         return len(self.consensus.needs_review())
+
+    @property
+    def fields(self) -> list:
+        """Every placeholder, however it was found."""
+        out = list(self.skeleton.placeholders) if self.skeleton else []
+        out += list(self.declared.fields) if self.declared else []
+        return out
 
     @property
     def unconfident(self) -> list:
@@ -54,7 +63,10 @@ class LearnResult:
         code forces a human through the review exactly once, rather than
         never.
         """
-        return self.skeleton.unconfident if self.skeleton else []
+        weak = list(self.skeleton.unconfident) if self.skeleton else []
+        if self.declared is not None:
+            weak += [f for f in self.declared.fields if f.name_confidence < 0.70]
+        return weak
 
 
 def _doc_ids(paths: Sequence[Path]) -> list[str]:
@@ -127,6 +139,14 @@ def learn(
     result.skeleton, result.materialized = _infer_skeleton(
         paths, observations, best.doc, donor_pkg, overrides.placeholders)
 
+    # Two sources, one set of placeholders. The comparator finds a field by
+    # noticing that twelve documents differ in the same place; a form simply
+    # says where its fields are. Neither subsumes the other -- a report has
+    # no content controls to declare, and nobody has twelve filled-in copies
+    # of a form -- so both run, and this is read after materialization so the
+    # comparator's inferences are already declared in the donor too.
+    result.declared = find_fields(donor_pkg)
+
     directory.mkdir(parents=True, exist_ok=True)
     template = directory / pio.TEMPLATE
     donor_pkg.save(template, deterministic=True)
@@ -142,6 +162,20 @@ def learn(
     if result.skeleton is not None:
         for pname, entry in result.skeleton.as_overrides().items():
             overrides.placeholders.setdefault(pname, {}).update(entry)
+    if result.declared is not None:
+        for pname, entry in result.declared.as_placeholders().items():
+            known = overrides.placeholders.setdefault(pname, {})
+            for key, value in entry.items():
+                # The declaration knows where the field is and what mechanism
+                # holds it. The comparator knows what its values look like --
+                # that it is an identifier matching a pattern, not merely
+                # "text" -- so the declaration fills gaps and does not
+                # overwrite. A check box is the exception: nothing the
+                # comparator infers beats the document saying "this is a box".
+                if key == "type" and value in ("checkbox", "choice"):
+                    known[key] = value
+                else:
+                    known.setdefault(key, value)
     for pname, entry in placeholders_in(donor_pkg).items():
         known = overrides.placeholders.setdefault(pname, {})
         for key, value in entry.items():
