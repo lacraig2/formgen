@@ -245,6 +245,151 @@ def lint(ctx, documents, profile_dir, as_json, verbose, max_severity):
         raise SystemExit(worst)
 
 
+# -- new ------------------------------------------------------------------
+
+
+def _parse_set(pairs: tuple[str, ...]) -> dict:
+    out: dict = {}
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        if not sep:
+            raise UsageError(f"--set expects key=value, got {pair!r}")
+        out[key.strip()] = value
+    return out
+
+
+@cli.command()
+@click.argument("source", type=click.Path(exists=True, dir_okay=False,
+                                          path_type=Path))
+@click.option("--profile", "-p", "profile_dir", required=True,
+              type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--out", "-o", type=click.Path(dir_okay=False, path_type=Path),
+              default=None, help="Output .docx (default: alongside the source).")
+@click.option("--set", "overrides", multiple=True, metavar="KEY=VALUE",
+              help="Supply or override a front-matter field.")
+@click.option("--allow-missing", is_flag=True,
+              help="Emit a visible [[MISSING: key]] instead of refusing.")
+@click.option("--cover/--no-cover", default=True,
+              help="Keep the template's cover page (default: keep).")
+@click.pass_context
+def new(ctx, source, profile_dir, out, overrides, allow_missing, cover):
+    """Render a Markdown document into the house format."""
+    from .content.emit import emit as run_emit
+    from .content.markdown_in import parse, validate
+    from .safety import guards
+    from .safety.verify import check_integrity
+
+    console = _console(ctx)
+    profile = pio.Profile.load(Path(profile_dir))
+    if not profile.template.exists():
+        _fail(console, UsageError(f"no {pio.TEMPLATE} in {profile_dir}"))
+        return
+    destination = Path(out) if out else Path(source).with_suffix(".docx")
+
+    try:
+        text = Path(source).read_text(encoding="utf-8-sig")
+        doc = parse(text)
+        doc.meta.update(_parse_set(overrides))
+        required = profile.required_placeholders()
+        problems = validate(doc, required=required)
+        blocking = [p for p in problems if p.code != "footnote.unused"]
+
+        if blocking and not allow_missing:
+            console.write(f"{Path(source).name}: cannot render")
+            for problem in problems:
+                console.bullet(problem.message)
+                if problem.remedy:
+                    console.write(f"    {problem.remedy}")
+            raise SystemExit(2)
+        if blocking and allow_missing:
+            for key in sorted(required - set(doc.meta)):
+                # A visible sentinel, never a silently empty field: an empty
+                # one ships, and [[MISSING: reviewer]] does not.
+                doc.meta[key] = f"[[MISSING: {key}]]"
+
+        guards.check_writable(destination)
+        pkg, report = run_emit(doc, profile.template,
+                               source_dir=Path(source).parent, keep_cover=cover)
+        faults = check_integrity(pkg)
+        if faults:
+            _fail(console, InvariantError(
+                "the generated document failed its structural checks, so "
+                "nothing was written:\n    " + "\n    ".join(faults[:6])
+            ))
+            return
+        pkg.save(destination, deterministic=True)
+    except FormgenError as exc:
+        _fail(console, exc)
+        return
+    except ValueError as exc:
+        _fail(console, UsageError(f"{Path(source).name}: {exc}"))
+        return
+
+    console.write(f"{Path(source).name} -> {destination}")
+    console.write(f"  {report.summary()}")
+    for warning in doc.warnings + report.warnings:
+        console.bullet(warning)
+    for problem in problems:
+        if problem.code == "footnote.unused":
+            console.bullet(problem.message)
+    if report.fields:
+        console.write(
+            "  fields were inserted unpopulated; press F9 in Word (or re-run "
+            "with --refresh once Word support lands) to build them."
+        )
+    if blocking and allow_missing:
+        raise SystemExit(1)
+
+
+# -- extract --------------------------------------------------------------
+
+
+@cli.command("extract")
+@click.argument("document", type=DOCX)
+@click.option("--out", "-o", type=click.Path(dir_okay=False, path_type=Path),
+              default=None, help="Output .md (default: alongside the input).")
+@click.option("--media-dir", type=DIRECTORY, default=None,
+              help="Write embedded images here (default: <stem>.media).")
+@click.option("--profile", "-p", "profile_dir", default=None,
+              type=click.Path(exists=True, file_okay=False, path_type=Path),
+              help="Use a profile's style names to classify paragraphs.")
+@click.pass_context
+def extract_cmd(ctx, document, out, media_dir, profile_dir):
+    """Pull a .docx back to Markdown, so documents can live in git.
+
+    Not a reformatting path: round-tripping through Markdown loses comments,
+    tracked changes and embedded objects. Use `apply` to re-format.
+    """
+    from .content.extract import extract as run_extract
+    from .content.extract import to_markdown
+
+    console = _console(ctx)
+    path = Path(document)
+    destination = Path(out) if out else path.with_suffix(".md")
+    media = Path(media_dir) if media_dir else destination.with_suffix("").with_name(
+        destination.stem + ".media"
+    )
+    try:
+        pkg = OpcPackage.open(path)
+    except PackageError as exc:
+        _fail(console, InputError(f"{path.name}: {exc}"))
+        return
+    styles = None
+    if profile_dir:
+        styles = pio.Profile.load(Path(profile_dir)).style_names
+    doc = run_extract(pkg, media_dir=media, profile_styles=styles)
+    destination.write_text(to_markdown(doc), encoding="utf-8")
+
+    console.write(f"{path.name} -> {destination}")
+    console.write(
+        f"  {len(doc.blocks)} blocks, {len(doc.footnotes)} footnote(s)"
+    )
+    if media.exists() and any(media.iterdir()):
+        console.write(f"  images written to {media}")
+    for warning in doc.warnings:
+        console.bullet(warning)
+
+
 # -- apply ----------------------------------------------------------------
 
 

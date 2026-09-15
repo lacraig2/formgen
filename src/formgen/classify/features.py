@@ -174,7 +174,11 @@ def _measure(block: Block, styles: StyleGraph, numbering: Numbering) -> BlockFea
     features.seq_kind = _seq_kind(block.element)
     features.has_drawing = _has_graphic(block.element)
     features.sdt_tag = block.context.sdt_tag
-    features.is_empty = not text.strip()
+    # A paragraph holding only a picture has no text and is not empty. The
+    # distinction matters everywhere downstream: an "empty" paragraph is
+    # skipped by the classifier, by figure adjacency and by extraction, and
+    # skipping the figure is how a document loses its illustrations.
+    features.is_empty = not text.strip() and not features.has_drawing
     features.signature = _signature(features)
     return features
 
