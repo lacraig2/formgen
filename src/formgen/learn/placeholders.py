@@ -144,8 +144,10 @@ class SkeletonProfile:
         return [s for s in self.slots if s.kind == BOILERPLATE and s.enforced]
 
     def as_json(self) -> dict:
+        # A count, not the names. profile.json is the half of the profile
+        # meant to be shared; corpus.json is the audit trail and names them.
         return {
-            "documents": list(self.documents),
+            "document_count": len(self.documents),
             "slots": [_slot_json(s) for s in self.slots],
             "warnings": list(self.warnings),
         }
@@ -167,8 +169,8 @@ class SkeletonProfile:
             }
             if slot.pattern:
                 entry["pattern"] = slot.pattern
-            if slot.examples:
-                entry["examples"] = list(slot.examples[:3])
+            if shapes := shapes_of(slot.examples):
+                entry["looks_like"] = shapes
             if slot.needs_review:
                 entry["needs_review"] = True
             if slot.split:
@@ -176,6 +178,41 @@ class SkeletonProfile:
                 entry["template"] = slot.split.template(slot.name)
             out[slot.name] = entry
         return out
+
+
+def mask(value: str) -> str:
+    """A value's shape, with its content removed.
+
+    The exemplars' real values are what the pattern was inferred from, and
+    printing three of them at learn time is how a person confirms the field
+    was named right. Writing them into the profile is a different thing: the
+    profile is shared, and overrides.yaml is never regenerated, so three real
+    values would sit in a hand-edited file for as long as the format lives.
+
+    The shape carries what the message actually needed -- "LR-2024-0041" reads
+    as ``AA-0000-0000`` -- and is easier to act on than the regular expression
+    beside it.
+    """
+    out = []
+    for char in value[:40]:
+        if char.isdigit():
+            out.append("0")
+        elif char.isupper():
+            out.append("A")
+        elif char.islower():
+            out.append("a")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def shapes_of(examples) -> list[str]:
+    seen: list[str] = []
+    for value in examples:
+        shape = mask(value)
+        if shape and shape not in seen:
+            seen.append(shape)
+    return seen[:2]
 
 
 def _slot_json(slot: Slot) -> dict:
@@ -205,8 +242,8 @@ def _slot_json(slot: Slot) -> dict:
         })
         if slot.pattern:
             row["pattern"] = slot.pattern
-        if slot.examples:
-            row["examples"] = list(slot.examples[:3])
+        if shapes := shapes_of(slot.examples):
+            row["looks_like"] = shapes
         if slot.split:
             row["template"] = slot.split.template(slot.name)
     return row

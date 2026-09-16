@@ -67,6 +67,13 @@ ActiveX controls, add-ins, digital signatures, footnotes whose anchor was
 removed, and any image, embedding or external link left with nothing pointing
 at it.
 
+The sidecars get the same treatment. `overrides.yaml` records a placeholder's
+*shape* (`AA-0000-0000`) rather than three of the donor's real values — it is
+the one file `learn` never regenerates, so anything written there outlives the
+corpus. Exemplar file names are confined to `corpus.json` and `evidence.json`,
+neither of which is needed to use the format, so deleting those two before
+sharing a profile is a complete instruction. `README.md` says so.
+
 Where the rule cannot decide, it says so rather than guessing — see
 [open questions](docs/open-questions.md#14-what-can-the-redaction-not-decide).
 

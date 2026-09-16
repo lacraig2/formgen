@@ -721,3 +721,91 @@ def test_image_metadata_on_a_surviving_picture_is_reported_not_stripped():
     report = R.redact(pkg)
     assert "word/media/logo.jpeg" in pkg
     assert any("EXIF" in note and "GPS" in note for note in report.notes)
+
+
+# -- the rest of the profile folder --------------------------------------
+#
+# template.docx is one file in a directory that gets shared whole. The
+# sidecars are generated from the same corpus and had the same problem.
+
+
+def learned_with_values(tmp_path, value="LR-2024-0041"):
+    (tmp_path / "corpus").mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(3):
+        body = (
+            build.para("Thermal Margin Analysis", style="Title")
+            + build.para(f"Report No. {value[:-1]}{i}", style="BodyText")
+            + build.para(BOILERPLATE, style="BodyText")
+            + build.para("Introduction", style="Heading1")
+            + build.para(PROSE[i], style="BodyText")
+        )
+        path = tmp_path / "corpus" / f"Acme quarterly review {i}.docx"
+        build.make(body, creator="L. Craig",
+                   title="Thermal Margin Analysis of the X-7").save(
+            path, deterministic=True)
+        paths.append(path)
+    return learn(paths, tmp_path / "profile"), tmp_path / "profile"
+
+
+def read_all(directory):
+    return {f.name: f.read_text(errors="replace")
+            for f in sorted(directory.rglob("*"))
+            if f.is_file() and f.suffix != ".docx"}
+
+
+def test_the_exemplars_real_values_are_not_written_to_overrides(tmp_path):
+    """overrides.yaml is the one file learn never regenerates.
+
+    A real value written here outlives the corpus it came from, in a file
+    somebody hand-edits for as long as the format exists.
+    """
+    _, profile = learned_with_values(tmp_path)
+    text = (profile / "overrides.yaml").read_text()
+    assert "LR-2024-004" not in text
+    assert "looks_like" in text
+
+
+def test_the_shape_is_kept_because_it_is_what_the_message_needed(tmp_path):
+    _, profile = learned_with_values(tmp_path)
+    text = (profile / "overrides.yaml").read_text()
+    assert "AA-0000-000" in text
+
+
+def test_masking_keeps_the_shape_and_loses_the_content():
+    from formgen.learn.placeholders import mask
+
+    assert mask("LR-2024-0041") == "AA-0000-0000"
+    assert mask("L. Craig") == "A. Aaaaa"
+    assert mask("12 March 2024") == "00 Aaaaa 0000"
+
+
+def test_no_exemplar_value_reaches_any_generated_file(tmp_path):
+    _, profile = learned_with_values(tmp_path)
+    for name, text in read_all(profile).items():
+        assert "LR-2024-004" not in text, f"{name} carries an exemplar's value"
+
+
+def test_the_donors_title_does_not_reach_any_generated_file(tmp_path):
+    _, profile = learned_with_values(tmp_path)
+    for name, text in read_all(profile).items():
+        assert "X-7" not in text, f"{name} carries the donor's title"
+
+
+def test_exemplar_names_are_confined_to_the_two_audit_files(tmp_path):
+    """So that "delete these two before sharing" is a complete instruction.
+
+    Smeared across four files it would not have been -- which is what made
+    the advice worth giving only once the names were concentrated.
+    """
+    _, profile = learned_with_values(tmp_path)
+    carrying = {name for name, text in read_all(profile).items()
+                if "Acme quarterly review" in text}
+    assert carrying <= {"corpus.json", "evidence.json"}
+
+
+def test_and_the_readme_says_which_two(tmp_path):
+    _, profile = learned_with_values(tmp_path)
+    readme = (profile / "README.md").read_text()
+    assert "corpus.json" in readme and "evidence.json" in readme
+    assert "delete both before sharing" in readme

@@ -622,4 +622,4 @@ def test_a_value_of_the_wrong_shape_is_reported_but_does_not_block(cover_profile
     problems = validate(doc, required=cover_profile.required_placeholders(),
                         fields=cover_profile.placeholders)
     shape = [p for p in problems if p.code == "placeholder.shape"]
-    assert shape and "LR-20" in shape[0].remedy
+    assert shape and "AA-0000-0000" in shape[0].remedy

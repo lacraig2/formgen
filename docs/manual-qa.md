@@ -69,6 +69,14 @@ formgen learn C:\reports\*.docx -o profiles\lab-report
 - [ ] Any name `learn` reported as "still appears in ..." really is the house
       format and not a person. If it is a person, delete it here.
 
+Then the sidecars, which travel with the template:
+
+- [ ] `findstr /S /C:"<a value from one of your reports>" profiles\lab-report\*`
+      finds nothing outside `corpus.json` and `evidence.json`.
+- [ ] `overrides.yaml` shows shapes (`AA-0000-0000`), not real values.
+- [ ] The exemplars' file names appear only in `corpus.json` and
+      `evidence.json`, and `README.md` says to delete both before sharing.
+
 ### The console is the classic crash
 
 Run the same command in `cmd.exe` with `chcp 1252`, and again with a document

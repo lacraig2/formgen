@@ -375,13 +375,13 @@ def _check_field_shapes(doc: ContentDoc, fields: dict[str, dict]) -> list[Proble
             ))
             continue
         if not matched:
-            examples = spec.get("examples") or []
+            shapes = spec.get("looks_like") or []
             problems.append(Problem(
                 "placeholder.shape",
                 f"{name} is {value!r}, which does not look like the exemplars' "
                 f"{name} ({pattern})",
-                ("they look like: " + ", ".join(map(str, examples[:3])))
-                if examples else "loosen or delete the pattern in overrides.yaml.",
+                ("it should look like: " + ", ".join(map(str, shapes[:2])))
+                if shapes else "loosen or delete the pattern in overrides.yaml.",
             ))
     return problems
 

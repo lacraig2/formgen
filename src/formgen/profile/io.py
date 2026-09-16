@@ -315,7 +315,10 @@ def write_profile(
         "name": name,
         "generator": f"formgen {version}",
         "generated": generated or _dt.datetime.now().isoformat(timespec="seconds"),
-        "corpus": {"count": len(consensus.docs), "documents": list(consensus.docs)},
+        # A count, not the names: profile.json travels with the format, and
+        # an exemplar's file name can say more about a programme than the
+        # format ever does. corpus.json and evidence.json name them.
+        "corpus": {"count": len(consensus.docs)},
         # The donor's hash, so `sync` can tell "the user edited template.docx"
         # from "the user did not" without diffing the whole package.
         "template": {"sha256": template_sha},
@@ -416,8 +419,11 @@ def render_readme(
     lines = [
         f"# {name}",
         "",
-        f"Learned from {len(consensus.docs)} document(s): "
-        f"{', '.join(consensus.docs)}.",
+        f"Learned from {len(consensus.docs)} document(s). "
+        "`corpus.json` names them and `evidence.json` records which of them "
+        "voted for each value; neither is needed to use the format, so "
+        "delete both before sharing this profile if the file names are "
+        "themselves sensitive.",
         "",
         "`template.docx` **is** the format. To change it, open it in Word, "
         "edit it the way you would edit any document, and run "
@@ -425,7 +431,10 @@ def render_readme(
         "",
     ]
     if donor is not None:
-        lines += [f"Donor: `{donor.doc}` -- {donor.explain()}", ""]
+        # Deliberately without the donor's file name, which is the most
+        # revealing of the lot: it names the one document template.docx is
+        # a copy of. The score is what a reader needs to judge the choice.
+        lines += [f"Donor: {donor.explain().split(':', 1)[-1].strip()}", ""]
 
     if consensus.warnings:
         lines += ["## Read this first", ""]

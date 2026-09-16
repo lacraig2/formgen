@@ -289,12 +289,17 @@ def test_learn_is_reproducible(tmp_path):
            (b.directory / pio.PROFILE).read_text().replace("pb", "pa")
 
 
-def test_readme_names_the_donor_and_the_warnings(tmp_path):
+def test_readme_reports_the_donor_without_naming_it(tmp_path):
     result = learn(corpus(tmp_path, 2), tmp_path / "prof")
     readme = (result.directory / pio.README).read_text()
     assert "template.docx` **is** the format" in readme
     assert "only 2 exemplar" in readme
-    assert result.donor.doc in readme
+    # The donor's score is what a reader needs to judge the choice; its file
+    # name is the most revealing string in the corpus, because it names the
+    # one document template.docx is a copy of.
+    assert result.donor.doc not in readme
+    assert "agreement 100%" in readme
+    assert "delete both before sharing" in readme
 
 
 # -- the correction loop --------------------------------------------------

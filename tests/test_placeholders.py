@@ -204,7 +204,7 @@ def test_a_pattern_admits_a_length_range_when_the_examples_vary():
 # -- what the rest of the system consumes --------------------------------
 
 
-def test_overrides_carry_the_type_pattern_and_examples():
+def test_overrides_carry_the_type_pattern_and_the_values_shape():
     profile = classify(build({
         doc: [row("body", f"n{doc}", f"Report No. LR-202{i}-0001",
                   tag="formgen.report_number")]
@@ -214,7 +214,10 @@ def test_overrides_carry_the_type_pattern_and_examples():
     assert entry["type"] == "identifier"
     assert entry["required"] is True
     assert entry["pattern"].startswith("^")
-    assert len(entry["examples"]) == 3
+    # The shape, not the values. overrides.yaml is never regenerated, so a
+    # real value written here would outlive the corpus it came from.
+    assert entry["looks_like"] == ["AA-0000-0000"]
+    assert not any("LR-202" in str(v) for v in entry.values())
 
 
 def test_the_json_view_records_the_template_around_a_field():

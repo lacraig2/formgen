@@ -215,8 +215,8 @@ def profile_show(ctx, directory, show_all):
     rules = document.get("rules") or {}
     console.write(f"{document.get('name')}  ({len(rules)} properties)")
     console.write(
-        f"  learned from {document['corpus']['count']} document(s): "
-        + ", ".join(document["corpus"]["documents"])
+        f"  learned from {document['corpus']['count']} document(s)"
+        " -- corpus.json names them"
     )
     console.blank()
     rows = [

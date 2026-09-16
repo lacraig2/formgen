@@ -289,3 +289,33 @@ The second-order effect matters as much as the first. `apply` grafts the
 donor's headers and footers into *other people's* documents. Before this pass,
 a house format learned from twelve lab reports would have stamped the donor's
 own report number into the header of every document it touched.
+
+
+### The profile folder, not just the template
+
+`template.docx` is one file in a directory that gets shared whole, and the
+sidecars are generated from the same corpus. Two of them had the same problem.
+
+`overrides.yaml` recorded three real exemplar values per placeholder as
+`examples`. That file is the only one `learn` never regenerates, so those
+values would sit in a hand-edited file for as long as the format lived —
+outliving the corpus they came from. They are now masked to a shape:
+`LR-2024-0041` becomes `AA-0000-0000`. Nothing was lost by it. The shape is
+what the one message that read them back actually needed, and it is easier to
+act on than the regular expression printed beside it. The real values are
+still printed at learn time, where they are the point: seeing
+`e.g. LR-2024-0041` is how a person confirms the field was named right, and
+that output is terminal text belonging to whoever owns the documents.
+
+Exemplar **file names** are a different question, because they are provenance
+the profile's owner genuinely wants and a recipient may have no business
+seeing: `Acme-Q3-Thermal-Margin-Draft.docx` says more about a programme than
+the format ever does. Rather than guess, the names are now confined to
+`corpus.json` and `evidence.json` — the audit half of the profile, neither of
+which is needed to use the format — and `README.md` says so, so "delete these
+two before sharing" is a complete instruction. It was not complete before,
+because the names were also smeared across `profile.json` and the README
+itself. The donor's name went from the README for the same reason: it is the
+single most revealing string in the corpus, because it names the one document
+`template.docx` is a copy of. Its *score* stays, which is what a reader needs
+to judge the choice.
