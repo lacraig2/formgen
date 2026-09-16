@@ -255,9 +255,35 @@ failure.
 
 Everything unambiguous goes regardless of corpus size: the page-one thumbnail
 in `docProps/thumbnail.jpeg`, the custom XML store a content control was bound
-to, cached field results, custom property values, `TitlesOfParts`, footnotes
-whose anchor was removed, and any media, embedding or external link left with
+to, cached field results, custom property values, `dc:title` and
+`cp:contentStatus`, `TitlesOfParts`, the mail-merge setup and its data source,
+`printerSettings` (a binary blob naming a printer, often by UNC path), Quick
+Parts and AutoText in `word/glossary/`, macros, ActiveX controls, task-pane
+add-ins, digital signatures (invalid over a document we have just rewritten,
+and carrying the signer's certificate), smart-tag annotations, footnotes whose
+anchor was removed, and any media, embedding or external link left with
 nothing pointing at it.
+
+### Where the aligner does not reach
+
+The two-tier alignment covers body paragraphs and table cells, which leaves
+text boxes, image alt text and table descriptions outside it — and a text-box
+cover page, which the plan already notes defeats alignment entirely, is
+exactly where a report's title and client tend to sit. The rule does not
+change there; it just has to be asked directly rather than falling out of the
+alignment. Alt text every exemplar shares is a logo's description and stays
+(deleting it would break the template's accessibility); alt text only this
+document has is a caption about a photograph, and goes.
+
+### Kept on purpose, and said out loud
+
+A sensitivity label (`docMetadata/LabelInfo.xml`) and a ribbon customisation
+are an organisation's policy. Quietly removing an organisation's protection
+label from a document is not a decision a formatting tool gets to make, so
+both are kept and reported. Image metadata is the other one: a surviving
+letterhead may carry EXIF, XMP or a GPS tag, and removing it would mean
+re-encoding somebody's logo. It is reported instead, naming the part and what
+it found.
 
 The second-order effect matters as much as the first. `apply` grafts the
 donor's headers and footers into *other people's* documents. Before this pass,

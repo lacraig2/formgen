@@ -62,6 +62,30 @@ _RID_ATTRS = ("r:id", "r:embed", "r:link", "r:pict", "r:dm", "r:lo", "r:qs", "r:
 # is one author's line -- "LR-2024-0041 | L. Craig" -- and it is cleared.
 HEADER_AGREEMENT = 0.5
 
+# Whole part trees a template has no business carrying. Each is either the
+# donor's own tooling rather than their format, or a store of content that no
+# amount of reading word/document.xml would reveal.
+#
+#   glossary       Quick Parts and AutoText -- whole authored blocks
+#   printerSettings a binary blob naming a printer, often a UNC path
+#   vbaProject     macros: the donor's code, running on the next person's box
+#   activeX        embedded controls, likewise
+#   webextensions  task-pane add-ins bound to this document
+#   _xmlsignatures a signature over a document we have just rewritten, so it
+#                  is invalid anyway -- and it carries the signer's certificate
+_DATA_TREES = (
+    "word/glossary/", "word/printerSettings/", "word/webextensions/",
+    "word/activeX/", "_xmlsignatures/",
+)
+_DATA_FILES = ("word/vbaProject.bin", "word/vbaData.xml")
+
+# Attributes and elements describing content rather than being it. They are
+# accessibility text, so they are compared against the corpus rather than
+# dropped: a logo's "Acme letterhead" is format and recurs, while "site visit,
+# March 2024" on the same image does not.
+_DESCRIPTIONS = ("wp:docPr", "pic:cNvPr", "wps:cNvPr")
+_DESCRIPTION_ATTRS = ("descr", "title", "name")
+
 
 @dataclass
 class RedactReport:
@@ -122,13 +146,17 @@ def redact(pkg: OpcPackage, ctx=None, skeleton=None,
         )
 
     _redact_hdrftr(pkg, corpus, report)
+    _redact_unaligned_text(pkg, corpus, report)
+    _unwrap_smart_tags(pkg, report)
     _clear_field_results(pkg, report)
+    _clear_mail_merge(pkg, report)
     _clear_custom_properties(pkg, report)
     _clear_app_content(pkg, report)
     _drop_data_parts(pkg, report)
     _drop_unreferenced_notes(pkg, report)
     _prune_orphans(pkg, report)
     _check_identities(pkg, identities, report)
+    _report_survivors(pkg, report)
     return report
 
 
@@ -397,11 +425,19 @@ def _drop_data_parts(pkg: OpcPackage, report: RedactReport) -> None:
                 if part in pkg:
                     pkg.drop_part(part)
                     dropped.append(part)
-    # The custom XML store's own properties part hangs off the item, so it
-    # goes with it -- but a package that listed it at the root would leave an
-    # orphan behind.
+    for reltype in ("printerSettings", "signature", "signatureOrigin"):
+        for source in ("", pkg.main_document):
+            for part in dict.fromkeys(pkg.related_all(RT[reltype], source=source)):
+                if part in pkg:
+                    pkg.drop_part(part)
+                    dropped.append(part)
+    # By name as well as by relationship. These stores are reached through
+    # vendor relationship types that have changed more than once, and a sweep
+    # that missed one because the URI moved would be a silent leak.
     for part in list(pkg.names()):
-        if part.startswith("customXml/") and part in pkg:
+        if part in pkg and (part.startswith("customXml/")
+                            or part in _DATA_FILES
+                            or part.startswith(_DATA_TREES)):
             pkg.drop_part(part)
             dropped.append(part)
     report.dropped_parts = tuple(dict.fromkeys(dropped))
@@ -553,3 +589,203 @@ def _check_identities(pkg: OpcPackage, identities: tuple[str, ...],
             "was kept as house boilerplate. If it is a person rather than the "
             "format, delete it in template.docx."
         )
+
+
+# -- the regions the aligner never reaches -------------------------------
+#
+# The two-tier alignment covers body paragraphs and table cells. Text boxes,
+# image alt text and table descriptions are outside it -- and a text-box cover
+# page, which is exactly where a report's title and client tend to live,
+# defeats alignment entirely. The same rule still applies, it just has to be
+# asked directly: does the rest of the corpus say this too?
+
+
+def _textbox_paragraphs(root: etree._Element) -> list[etree._Element]:
+    out: list[etree._Element] = []
+    for content in root.iter(qn("w:txbxContent")):
+        out.extend(content.iter(qn("w:p")))
+    return out
+
+
+def _description_nodes(root: etree._Element) -> list[etree._Element]:
+    out: list[etree._Element] = []
+    for tag in _DESCRIPTIONS:
+        try:
+            out.extend(root.iter(qn(tag)))
+        except ValueError:      # a prefix this package never declares
+            continue
+    out.extend(root.iter(qn("w:tblPr")))
+    return out
+
+
+def _unaligned_strings(pkg: OpcPackage) -> set[str]:
+    """Everything the corpus test below compares, for one document."""
+    found: set[str] = set()
+    for part in _text_parts(pkg):
+        try:
+            root = pkg.element(part)
+        except Exception:
+            continue
+        for paragraph in _textbox_paragraphs(root):
+            if key := match_key("".join(paragraph.itertext())):
+                found.add(key)
+        for node in _description_nodes(root):
+            for value in _description_values(node):
+                found.add(match_key(value))
+    return found
+
+
+def _description_values(node: etree._Element) -> list[str]:
+    if node.tag == qn("w:tblPr"):
+        out = []
+        for tag in ("w:tblCaption", "w:tblDescription"):
+            child = node.find(qn(tag))
+            if child is not None and (child.get(qn("w:val")) or "").strip():
+                out.append(child.get(qn("w:val")))
+        return out
+    return [v for name in _DESCRIPTION_ATTRS
+            if (v := (node.get(name) or "").strip())]
+
+
+def _redact_unaligned_text(pkg: OpcPackage, corpus: dict | None,
+                           report: RedactReport) -> None:
+    others = [p for _, p in sorted((corpus or {}).items()) if p is not pkg]
+    if not others:
+        return
+    seen: dict[str, int] = {}
+    for other in others:
+        for key in _unaligned_strings(other):
+            seen[key] = seen.get(key, 0) + 1
+    needed = max(1, int(len(others) * HEADER_AGREEMENT))
+
+    def agreed(text: str) -> bool:
+        return seen.get(match_key(text), 0) >= needed
+
+    for part in _text_parts(pkg):
+        root = pkg.edit(part)
+        for paragraph in _textbox_paragraphs(root):
+            text = "".join(paragraph.itertext())
+            if not text.strip() or agreed(text):
+                continue
+            if _blank_paragraph(paragraph):
+                report.cleared_blocks += 1
+        for node in _description_nodes(root):
+            if node.tag == qn("w:tblPr"):
+                for tag in ("w:tblCaption", "w:tblDescription"):
+                    child = node.find(qn(tag))
+                    if child is None:
+                        continue
+                    if not agreed(child.get(qn("w:val")) or ""):
+                        node.remove(child)
+                        report.cleared_properties += 1
+                continue
+            for name in _DESCRIPTION_ATTRS:
+                value = (node.get(name) or "").strip()
+                # @name is a shape's own label ("Picture 1"); it only carries
+                # anything when somebody renamed it, and then it is a caption.
+                if value and not agreed(value):
+                    del node.attrib[name]
+                    report.cleared_properties += 1
+
+
+def _unwrap_smart_tags(pkg: OpcPackage, report: RedactReport) -> None:
+    """Take the smart-tag wrappers off, keeping their runs.
+
+    A w:smartTag is a transparent wrapper Word 2003 put around text it thought
+    it recognised -- a person, a place, a stock ticker -- and w:smartTagPr/w:attr
+    holds what it decided. Unwrapping keeps every visible run and loses only
+    the annotation.
+    """
+    for part in _text_parts(pkg):
+        root = pkg.edit(part)
+        for tag in list(root.iter(qn("w:smartTag"))):
+            parent = tag.getparent()
+            if parent is None:
+                continue
+            index = list(parent).index(tag)
+            props = tag.find(qn("w:smartTagPr"))
+            if props is not None:
+                tag.remove(props)
+            for offset, child in enumerate(list(tag)):
+                parent.insert(index + offset, child)
+            parent.remove(tag)
+            report.cleared_properties += 1
+
+
+def _clear_mail_merge(pkg: OpcPackage, report: RedactReport) -> None:
+    """Remove the merge setup, which names a recipient list and where it lives.
+
+    w:odso carries the connection string -- a path under someone's profile, or
+    a server -- and w:query the SQL. A template that opens asking for a
+    spreadsheet nobody has is also just broken.
+    """
+    name = pkg.related(RT["settings"])
+    if name and name in pkg:
+        root = pkg.edit(name)
+        for element in list(root.iter(qn("w:mailMerge"))):
+            parent = element.getparent()
+            if parent is not None:
+                parent.remove(element)
+                report.cleared_properties += 1
+    dropped = list(report.dropped_parts)
+    for reltype in ("mailMergeSource", "mailMergeHeaderSource"):
+        for source in ("", pkg.main_document):
+            rels = pkg.rels(source)
+            for rel in list(rels):
+                if rel.reltype != RT[reltype]:
+                    continue
+                target = None if rel.external else rel.resolve(source)
+                rels.drop(rel.rid)
+                pkg.touch_rels(source)
+                report.dropped_links += 1
+                if target and target in pkg:
+                    pkg.drop_part(target)
+                    dropped.append(target)
+    report.dropped_parts = tuple(dict.fromkeys(dropped))
+
+
+# -- what survived, and what we are not going to decide -------------------
+
+# Bytes that mean a picture is carrying metadata of its own. Stripping it
+# would mean re-encoding somebody's logo, so this reports rather than acts.
+_IMAGE_METADATA = (
+    (b"Exif\x00\x00", "EXIF"),
+    (b"http://ns.adobe.com/xap/", "XMP"),
+    (b"photoshop:", "Photoshop"),
+    (b"GPS", "GPS"),
+)
+
+
+def _report_survivors(pkg: OpcPackage, report: RedactReport) -> None:
+    """Name what was kept on purpose but a person might still want gone.
+
+    Two kinds. A sensitivity label and a ribbon customisation are an
+    organisation's policy, and quietly removing an organisation's protection
+    label from a document is not a decision a formatting tool gets to make.
+    Image metadata is the other: stripping it means re-encoding the image, and
+    re-encoding somebody's letterhead to remove a GPS tag it probably does not
+    have is the worse trade.
+    """
+    for part, what in (("docMetadata/LabelInfo.xml", "a sensitivity label"),
+                       ("customUI/customUI.xml", "a ribbon customisation"),
+                       ("customUI/customUI14.xml", "a ribbon customisation")):
+        if part in pkg:
+            report.notes.append(
+                f"template.docx still carries {what} ({part}) from the donor. "
+                "It was kept because removing it is your organisation's "
+                "decision, not this tool's -- delete the part if it should "
+                "not travel with the format."
+            )
+    for name in sorted(pkg.names()):
+        if not name.startswith("word/media/"):
+            continue
+        blob = pkg.blob(name)
+        kinds = sorted({label for marker, label in _IMAGE_METADATA
+                        if marker in blob})
+        if kinds:
+            report.notes.append(
+                f"{name} is still referenced by the format and carries "
+                f"{', '.join(kinds)} metadata. Removing it would mean "
+                "re-encoding the image, so it was left alone -- check it if "
+                "the picture was taken rather than drawn."
+            )

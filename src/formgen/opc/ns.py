@@ -77,6 +77,14 @@ RT = {
     # it, so it holds the *values* a bound template was last filled with.
     "customXml": f"{_OFFICE_REL}/customXml",
     "package": f"{_OFFICE_REL}/package",
+    # Parts a template has no business carrying: the donor's printer,
+    # their macros, their mail-merge recipients, their signature.
+    "printerSettings": f"{_OFFICE_REL}/printerSettings",
+    "mailMergeSource": f"{_OFFICE_REL}/mailMergeSource",
+    "mailMergeHeaderSource": f"{_OFFICE_REL}/mailMergeHeaderSource",
+    "signature": f"{_PKG_REL}/digital-signature/signature",
+    "signatureOrigin": f"{_PKG_REL}/digital-signature/origin",
+
 
     # Word 2010+ comment sidecars
     "commentsExtended": (

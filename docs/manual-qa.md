@@ -61,7 +61,11 @@ formgen learn C:\reports\*.docx -o profiles\lab-report
 - [ ] In Explorer, switch the profile folder to a large-icon view: the
       template's preview must not be a picture of the donor's cover page.
 - [ ] File → Info → Properties → Advanced Properties → Custom: property names
-      may remain, values must be empty.
+      may remain, values must be empty. On the Summary tab, Title is empty.
+- [ ] Mailings tab: the document is not still attached to a recipient list.
+- [ ] Insert → Quick Parts → Building Blocks Organizer: nothing from the donor.
+- [ ] Right-click any surviving picture → Alt Text: it describes the logo, not
+      a photograph somebody took.
 - [ ] Any name `learn` reported as "still appears in ..." really is the house
       format and not a person. If it is a person, delete it here.
 

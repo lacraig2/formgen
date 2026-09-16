@@ -482,3 +482,242 @@ def test_learn_reports_what_it_redacted(tmp_path):
     result = CliRunner().invoke(
         cli, ["learn", *[str(p) for p in paths], "-o", str(tmp_path / "p")])
     assert "redact:" in result.output
+
+
+# -- the regions the aligner never reaches -------------------------------
+
+V_NS = 'xmlns:v="urn:schemas-microsoft-com:vml"'
+WP_NS = ('xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
+         'wordprocessingDrawing"')
+A_NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+
+
+def textbox_in_boilerplate(inner: str) -> str:
+    """A shape anchored in the paragraph every exemplar shares.
+
+    The paragraph is boilerplate, so body clearing keeps it -- and the plan
+    already notes that a text-box cover page defeats alignment entirely, which
+    is what makes this the interesting case rather than a contrived one.
+    """
+    return (f'<w:p {build.W} {V_NS}><w:pPr><w:pStyle w:val="BodyText"/></w:pPr>'
+            f'<w:r><w:t>{BOILERPLATE}</w:t></w:r>'
+            f'<w:r><w:pict><v:shape><v:textbox><w:txbxContent>'
+            f'<w:p><w:r><w:t>{inner}</w:t></w:r></w:p>'
+            f'</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>')
+
+
+def corpus_of(tmp_path, bodies):
+    (tmp_path / "corpus").mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i, extra in enumerate(bodies):
+        path = tmp_path / "corpus" / f"r{i}.docx"
+        exemplar(i, extra_body=extra).save(path, deterministic=True)
+        paths.append(path)
+    return paths
+
+
+def test_text_box_content_the_corpus_does_not_share_is_cleared(tmp_path):
+    paths = corpus_of(tmp_path, [
+        textbox_in_boilerplate(f"Prepared for Acme under contract {i}")
+        for i in range(3)])
+    learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    assert "under contract 0" not in text_of(template)
+
+
+def test_text_box_content_every_exemplar_shares_is_kept(tmp_path):
+    """A text-box cover block IS the format when every report has it."""
+    paths = corpus_of(tmp_path, [
+        textbox_in_boilerplate("UNCLASSIFIED // FOR OFFICIAL USE ONLY")
+        for _ in range(3)])
+    learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    assert "FOR OFFICIAL USE ONLY" in text_of(template)
+
+
+def picture(rid: str, descr: str, name: str = "Picture 1") -> str:
+    return (f'<w:p {build.W} {build.R}><w:pPr><w:pStyle w:val="BodyText"/>'
+            f'</w:pPr><w:r><w:t>{BOILERPLATE}</w:t></w:r>'
+            f'<w:r><w:drawing {WP_NS}><wp:inline>'
+            f'<wp:docPr id="1" name="{name}" descr="{descr}"/>'
+            f'<a:graphic {A_NS}><a:graphicData><a:blip r:embed="{rid}"/>'
+            f'</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>')
+
+
+def with_picture(i: int, descr: str) -> OpcPackage:
+    pkg = exemplar(i)
+    pkg.add_part("word/media/image1.png", b"\x89PNG\r\n\x1a\nX", "image/png")
+    rid = pkg.relate(RT["image"], "word/media/image1.png", pkg.main_document)
+    body = pkg.edit(pkg.main_document).find(qn("w:body"))
+    body.insert(len(body) - 1, etree.fromstring(picture(rid, descr)))
+    return pkg
+
+
+def test_alt_text_only_one_document_has_is_cleared(tmp_path):
+    """Alt text is where descriptive prose about a photo actually lives."""
+    (tmp_path / "corpus").mkdir(parents=True)
+    paths = []
+    for i in range(3):
+        path = tmp_path / "corpus" / f"r{i}.docx"
+        with_picture(i, f"Test article on the bench at Acme, visit {i}").save(
+            path, deterministic=True)
+        paths.append(path)
+    learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    assert "visit 0" not in template.blob(template.main_document).decode()
+
+
+def test_alt_text_every_document_shares_is_kept(tmp_path):
+    """Removing a logo's alt text would break the template's accessibility."""
+    (tmp_path / "corpus").mkdir(parents=True)
+    paths = []
+    for i in range(3):
+        path = tmp_path / "corpus" / f"r{i}.docx"
+        with_picture(i, "Acme Laboratories letterhead").save(
+            path, deterministic=True)
+        paths.append(path)
+    learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    assert "Acme Laboratories letterhead" in \
+        template.blob(template.main_document).decode()
+
+
+def test_a_table_description_only_one_document_has_is_cleared(tmp_path):
+    def described(i: int) -> str:
+        return (f'<w:tbl {build.W}><w:tblPr>'
+                f'<w:tblDescription w:val="Margins measured in run {i}"/>'
+                f'</w:tblPr><w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>Case</w:t>'
+                f'</w:r></w:p></w:tc></w:tr></w:tbl><w:p/>')
+    paths = corpus_of(tmp_path, [described(i) for i in range(3)])
+    learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    assert "run 0" not in template.blob(template.main_document).decode()
+
+
+def test_smart_tags_are_unwrapped_but_their_runs_survive():
+    """The wrapper carries what Word decided; the runs carry the words."""
+    tagged = (f'<w:p {build.W}><w:pPr><w:pStyle w:val="BodyText"/></w:pPr>'
+              f'<w:smartTag w:uri="urn:x" w:element="PersonName">'
+              f'<w:smartTagPr><w:attr w:name="who" w:val="Craig, L"/>'
+              f'</w:smartTagPr><w:r><w:t>{BOILERPLATE}</w:t></w:r>'
+              f'</w:smartTag></w:p>')
+    pkg = build.make(tagged)
+    R.redact(pkg)
+    xml = pkg.blob(pkg.main_document).decode()
+    assert "Craig, L" not in xml
+    assert "smartTag" not in xml
+    assert BOILERPLATE in xml
+
+
+# -- whole trees a template has no business carrying ---------------------
+
+
+def test_the_donors_title_does_not_become_the_templates_title(tmp_path):
+    """dc:title is what Word offers as the name and what a PDF export writes."""
+    paths = corpus(tmp_path / "corpus")
+    for path in paths:
+        pkg = OpcPackage.open(path)
+        core = pkg.edit("docProps/core.xml")
+        core.find(qn("dc:title")).text = "Thermal Margin Analysis of the X-7"
+        pkg.save(path, deterministic=True)
+    learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    assert "X-7" not in template.blob("docProps/core.xml").decode()
+
+
+def test_the_mail_merge_setup_and_its_data_source_are_removed():
+    """w:odso is a connection string: a server, or a path under a profile."""
+    pkg = build.make(settings_extra=(
+        '<w:mailMerge><w:mainDocumentType w:val="formLetters"/>'
+        '<w:odso><w:udl w:val="Data Source=C:\\Users\\lcraig\\people.xlsx"/>'
+        '</w:odso></w:mailMerge>'))
+    pkg.touch_rels(pkg.main_document).add(
+        RT["mailMergeSource"], "file:///C:/Users/lcraig/people.xlsx",
+        external=True)
+    R.redact(pkg)
+    assert "lcraig" not in pkg.blob("word/settings.xml").decode()
+    assert "lcraig" not in \
+        pkg.blob("word/_rels/document.xml.rels").decode()
+
+
+def test_macros_activex_and_add_ins_do_not_travel_with_the_format():
+    """None of them is format, and all of them run on the next person's box."""
+    pkg = build.make()
+    pkg.add_part("word/vbaProject.bin", b"MZmacro",
+                 "application/vnd.ms-office.vbaProject")
+    pkg.relate("http://schemas.microsoft.com/office/2006/relationships/"
+               "vbaProject", "word/vbaProject.bin", pkg.main_document)
+    pkg.add_part("word/activeX/activeX1.xml", b"<ocx/>", "application/xml")
+    pkg.add_part("word/webextensions/webextension1.xml", b"<we/>",
+                 "application/xml")
+    R.redact(pkg)
+    for part in ("word/vbaProject.bin", "word/activeX/activeX1.xml",
+                 "word/webextensions/webextension1.xml"):
+        assert part not in pkg
+
+
+def test_quick_parts_do_not_travel_with_the_format():
+    """A building block is a whole authored passage, stored out of sight."""
+    pkg = build.make()
+    pkg.add_part("word/glossary/document.xml", (
+        build.DECL + f'\n<w:glossaryDocument {build.W}><w:docParts><w:docPart>'
+        '<w:docPartBody><w:p><w:r><w:t>Prepared for Acme</w:t></w:r></w:p>'
+        '</w:docPartBody></w:docPart></w:docParts></w:glossaryDocument>'
+    ).encode(), "application/xml")
+    pkg.relate(RT["glossaryDocument"], "word/glossary/document.xml",
+               pkg.main_document)
+    R.redact(pkg)
+    assert "word/glossary/document.xml" not in pkg
+
+
+def test_the_printer_and_the_signature_go():
+    """printerSettings names a printer and often a UNC path; a signature over
+    a document we have just rewritten is invalid anyway, and carries the
+    signer's certificate."""
+    pkg = build.make()
+    pkg.add_part("word/printerSettings/printerSettings1.bin", b"\\\\srv\\prn",
+                 "application/octet-stream")
+    pkg.relate(RT["printerSettings"],
+               "word/printerSettings/printerSettings1.bin", pkg.main_document)
+    pkg.add_part("_xmlsignatures/sig1.xml", b"<Signature>L Craig</Signature>",
+                 "application/xml")
+    pkg.relate(RT["signature"], "_xmlsignatures/sig1.xml", "")
+    R.redact(pkg)
+    assert "word/printerSettings/printerSettings1.bin" not in pkg
+    assert "_xmlsignatures/sig1.xml" not in pkg
+
+
+# -- kept on purpose, and said out loud ----------------------------------
+
+
+def test_a_sensitivity_label_is_kept_and_reported(tmp_path):
+    """Removing an organisation's protection label is not our decision."""
+    paths = corpus(tmp_path / "corpus")
+    for path in paths:
+        pkg = OpcPackage.open(path)
+        pkg.add_part("docMetadata/LabelInfo.xml",
+                     b'<labelList><label siteId="acme-guid"/></labelList>',
+                     "application/xml")
+        pkg.save(path, deterministic=True)
+    result = learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    assert "docMetadata/LabelInfo.xml" in template
+    assert any("sensitivity label" in note for note in result.notes)
+
+
+def test_image_metadata_on_a_surviving_picture_is_reported_not_stripped():
+    """Stripping it means re-encoding somebody's letterhead."""
+    pkg = build.make()
+    build.add_hdrftr(pkg, "header", "header1.xml", "Acme")
+    pkg.add_part("word/media/logo.jpeg", b"\xff\xd8Exif\x00\x00II*GPS\xff\xd9",
+                 "image/jpeg")
+    rid = pkg.relate(RT["image"], "word/media/logo.jpeg", "word/header1.xml")
+    header = pkg.edit("word/header1.xml")
+    header.append(etree.fromstring(
+        f'<w:p {build.W} {build.R}><w:r><w:drawing {WP_NS}><wp:inline>'
+        f'<wp:docPr id="1" name="logo"/><a:graphic {A_NS}><a:graphicData>'
+        f'<a:blip r:embed="{rid}"/></a:graphicData></a:graphic>'
+        f'</wp:inline></w:drawing></w:r></w:p>'))
+    report = R.redact(pkg)
+    assert "word/media/logo.jpeg" in pkg
+    assert any("EXIF" in note and "GPS" in note for note in report.notes)

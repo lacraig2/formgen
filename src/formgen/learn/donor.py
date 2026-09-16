@@ -280,7 +280,12 @@ def _scrub_core_properties(pkg: OpcPackage, report: ScrubReport) -> None:
     root = pkg.edit(name)
     cleared = 0
     found: list[str] = []
+    # dc:title is the donor's report title -- "Thermal Margin Analysis of the
+    # X-7 Radiator" -- and it is what Word offers as the document name, what
+    # SharePoint indexes and what a PDF export writes into its metadata. It
+    # belongs to the report, not to the format.
     for tag in ("dc:creator", "cp:lastModifiedBy", "cp:lastPrinted",
+                "dc:title", "cp:contentStatus", "dc:identifier", "cp:version",
                 "dc:description", "cp:keywords", "dc:subject", "cp:category"):
         for el in root.findall(qn(tag)):
             if el.text:

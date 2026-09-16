@@ -54,12 +54,18 @@ this document has is one author's prose and goes. Headings always stay — they
 are the skeleton. A placeholder keeps its frame and loses its value, so the
 control reads *Report Number* rather than `LR-2024-0041`.
 
+The same question is put directly to the places alignment never reaches —
+text boxes, image alt text, table descriptions — because a text-box cover page
+is exactly where a title and a client tend to sit.
+
 Alongside that, everything that is data regardless of what the corpus says:
 the page-one thumbnail in `docProps/thumbnail.jpeg` (a JPEG of the cover, and
 the leak nobody inspects for), the custom XML store a content control was
-bound to, cached field results, custom property values, footnotes whose anchor
-was removed, and any image, embedding or external link left with nothing
-pointing at it.
+bound to, cached field results, `dc:title`, custom property values, the
+mail-merge setup and its data source, `printerSettings`, Quick Parts, macros,
+ActiveX controls, add-ins, digital signatures, footnotes whose anchor was
+removed, and any image, embedding or external link left with nothing pointing
+at it.
 
 Where the rule cannot decide, it says so rather than guessing — see
 [open questions](docs/open-questions.md#14-what-can-the-redaction-not-decide).
