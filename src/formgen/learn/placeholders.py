@@ -295,7 +295,7 @@ def _classify_column(index: int, column: Column, texts: dict[str, str],
         return slot
 
     split = split_variable_part(texts)
-    if split is not None and split.is_field:
+    if split is not None and split.is_field and _framed_values_look_like_values(split):
         slot.kind = PLACEHOLDER
         slot.split = split
         slot.text = split.prefix + split.suffix
@@ -332,6 +332,22 @@ def _value_shaped(text: str) -> bool:
     if len(stripped.split()) > BARE_FIELD_WORDS:
         return False
     return not stripped.endswith(_SENTENCE_END)
+
+
+def _framed_values_look_like_values(split: Split) -> bool:
+    """A shared prefix is evidence of a label, but it can be a coincidence.
+
+    Six findings that happen to open with "The" share a prefix, and trusting
+    the frame alone turns an author's paragraph into a field called `the`.
+    The frame buys a longer allowance -- a label really is evidence -- but
+    not the sentence test: a value does not end in a full stop, and prose
+    does.
+    """
+    values = [v.strip() for v in split.values.values() if v.strip()]
+    if not values:
+        return False
+    return all(len(v.split()) <= FIELD_WORDS and not v.endswith(_SENTENCE_END)
+               for v in values)
 
 
 def _agreement(texts: list[str]) -> float:
@@ -505,13 +521,25 @@ def _dedupe_names(profile: SkeletonProfile) -> None:
 
 
 def _locate_in_donor(slot: Slot, column: Column, donor: str | None) -> None:
-    if donor is None or donor not in column.members:
+    """Where in the donor this slot's block actually is.
+
+    `Column.members` holds the position within the sequence that was
+    aligned -- one section's body, say -- not the position in the document.
+    The two coincide only when that sequence starts at the first block, which
+    is why this read right for a corpus whose cover page was plain paragraphs
+    and silently addressed the wrong block the moment there was a title above
+    a table. The Item carries the document index; use it.
+    """
+    if donor is None or donor not in column.tokens:
         return
-    slot.donor_index = column.members[donor]
+    token = column.tokens[donor]
+    slot.donor_index = getattr(token, "index", None)
+    if slot.donor_index is not None and slot.donor_index < 0:
+        slot.donor_index = None
     if slot.split and donor in slot.split.values:
         slot.donor_value = slot.split.values[donor]
     else:
-        slot.donor_value = text_of(column.tokens.get(donor, "")).strip()
+        slot.donor_value = text_of(token).strip()
 
 
 # -- type inference -------------------------------------------------------

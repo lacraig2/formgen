@@ -396,3 +396,70 @@ def test_what_learn_counts_is_what_lint_enforces(learned):
     findings = [f for f in lint(build.make(body), profile).findings
                 if f.code.startswith("structure.boilerplate")]
     assert len(findings) == counted
+
+
+def test_a_slot_addresses_the_donor_block_it_actually_came_from(tmp_path):
+    """Column.members holds a position within the sequence that was aligned,
+    not within the document. The two coincide only when that sequence starts
+    at the first block, so this read right for a plain cover page and
+    silently addressed the wrong paragraph once there was a title above a
+    table -- and every placeholder then failed to materialize."""
+    def cover(number, author):
+        return build.make(
+            build.para("Thermal Margin Analysis", style="Title")
+            + build.table(
+                build.cell(build.para("Report Number:", style="BodyText"))
+                + build.cell(build.para(number, style="BodyText")),
+                build.cell(build.para("Prepared by:", style="BodyText"))
+                + build.cell(build.para(author, style="BodyText")),
+            )
+            + build.para("Introduction", style="Heading1")
+            + build.para("Findings are reported below.", style="BodyText"),
+            creator=author)
+
+    directory = tmp_path / "corpus"
+    directory.mkdir()
+    people = ["L. Craig", "R. Patel", "K. Ito", "M. Rao"]
+    for index, author in enumerate(people):
+        cover(f"LR-202{index}-0041", author).save(
+            directory / f"r{index}.docx", deterministic=True)
+
+    result = learn(sorted(directory.glob("*.docx")), tmp_path / "prof",
+                   generated="x")
+    assert result.materialized.skipped == []
+    assert len(result.materialized.wrapped) == len(result.skeleton.placeholders)
+
+    controls = placeholders_in(OpcPackage.open(tmp_path / "prof" / "template.docx"))
+    assert "report_number" in controls
+
+    # The control must wrap the value, not the label beside it.
+    package = OpcPackage.open(tmp_path / "prof" / "template.docx")
+    body = package.element(package.main_document)
+    inside = {}
+    for sdt in body.iter(qn("w:sdt")):
+        tag = sdt.find(f"{qn('w:sdtPr')}/{qn('w:tag')}").get(qn("w:val"))
+        content = sdt.find(qn("w:sdtContent"))
+        inside[tag] = "".join(content.itertext())
+    assert inside["formgen.report_number"].startswith("LR-20")
+    assert "Report Number:" not in inside["formgen.report_number"]
+
+
+def test_prose_that_happens_to_share_an_opening_word_is_not_a_field():
+    """Six findings that all start with "The" share a prefix. Trusting the
+    frame alone turns an author's paragraph into a field called `the`."""
+    from formgen.learn.align import Item, Section, Skeleton, align
+    from formgen.learn.placeholders import FREE_CONTENT, classify
+
+    findings = [
+        "The X-7 radiator exceeds its design margin under worst-case loading.",
+        "The B-2 manifold showed a 4 K shortfall against the qualification limit.",
+        "The X-9 radiator met margin at every operating point that was tested.",
+        "The C-1 cold plate exceeded its allowable gradient during the soak.",
+    ]
+    sequences = {
+        f"d{i}": [Item("body", f"f{i}", 0, text)]
+        for i, text in enumerate(findings)
+    }
+    skeleton = Skeleton(sections=[Section(heading=None, columns=align(sequences))],
+                        documents=tuple(sorted(sequences)))
+    assert classify(skeleton).slots[0].kind == FREE_CONTENT
