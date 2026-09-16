@@ -135,3 +135,51 @@ the corpus is marked `needs_review` with the reason spelled out; one below 40%
 is not part of the skeleton at all. The only way to settle it is a human
 looking at `template.docx`, which is why the profile build fails once until
 somebody does.
+
+## 11. Half of real documents have no styles. What then?
+
+Measured, not assumed: of 130 real `.docx` from Apache POI's corpus, **48%
+use two or fewer paragraph styles**. Google Docs export, PDF-to-Word
+conversion and plain hand-formatting all produce the same thing -- every
+paragraph `Normal`, the format written out on the runs.
+
+A style-keyed ballot learns almost nothing from those. The title, the
+headings and the body all land in a bucket called `normal`, so the corpus
+agrees the body is 11pt and has no opinion at all about what a heading looks
+like -- the most visible thing about a house format, invisible.
+
+We added a **second ballot keyed on the classified role**, which is recovered
+from appearance and so works precisely where styles do not. On a corpus put
+through the converter it recovers the same title/heading/body sizes as the
+styled original. Three constraints keep it honest:
+
+- It is observed *alongside* the style-keyed ballot, never instead of it.
+  When a document has styles they are the better key, because a style name
+  crosses a file boundary and an inferred role is our opinion.
+- **A guess is not a ballot.** Only classifications the classifier does not
+  flag for review may vote.
+- Body-level paragraphs only. A table cell's format is governed by the table
+  style, and letting a dense table vote on `body` would drown the prose.
+
+Of body-level paragraphs in the real corpus, the median document has 100% of
+them voting and none has under 50%.
+
+## 12. Why write styles into the donor at all?
+
+Because a format that is known but cannot be expressed is half a profile.
+`apply` restyles a paragraph by pointing `w:pStyle` at a style; on a
+hand-formatted corpus the donor defines none, so there is nowhere to point
+and the format cannot be applied even though it was learned.
+
+So roles the corpus agreed on are materialized as styles in the donor. This
+also settles a trap that predates the whole question: a `w:pStyle` naming a
+style the document does not define falls back to Word's *built-in*
+definition of that name, which differs by Word version and by locale. A
+profile that says "Heading 1" without defining it is not specifying a format,
+it is naming one and hoping.
+
+Two rules: a style the donor already defines is never rebuilt -- the real
+article carries conditional formatting, latent-style flags and linked
+character styles no reconstruction from JSON could reproduce -- and the
+role-to-style mapping is **recorded in profile.json**, not re-derived, so
+nothing ever points `w:pStyle` at a style we merely assumed was there.

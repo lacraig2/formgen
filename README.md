@@ -64,6 +64,13 @@ tool you stop trusting.
 
 ## What it will not do
 
+- **It will not need your documents to have styles.** 48% of real `.docx`
+  use two or fewer paragraph styles, because Google Docs export, PDF
+  conversion and hand-formatting all leave everything as `Normal`. Paragraphs
+  vote by classified role as well as by style name, so the format is
+  recovered either way -- and the roles it learns are written into the donor
+  as real styles, because a format that cannot be pointed at cannot be
+  applied.
 - **It will not guess quietly.** Every learned property carries two numbers —
   coverage (how many documents had an opinion) and agreement (how many agreed)
   — and they are never collapsed into one. A style in 3 of 12 documents is
@@ -119,7 +126,7 @@ CI enforces the no-new-installs claim rather than asserting it.
 ## Tests
 
 ```
-pytest -q                    # 587 tests
+pytest -q                    # 631 tests
 pytest -q tests/test_smoke.py -rs   # + LibreOffice, if it is installed
 ```
 

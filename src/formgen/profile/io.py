@@ -284,6 +284,7 @@ def write_profile(
     generated: str | None = None,
     version: str = "0.1.0",
     skeleton: Any = None,
+    role_styles: dict[str, str] | None = None,
 ) -> list[str]:
     """Write every generated artifact. Returns human-readable notes."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -325,6 +326,12 @@ def write_profile(
         # `learn` has enough exemplars to align, and that absence is the
         # honest answer rather than a skeleton inferred from two documents.
         "skeleton": skeleton.as_json() if skeleton is not None else None,
+        # role -> the style in template.docx that implements it. Recorded
+        # rather than derived, because `apply` points w:pStyle at whatever
+        # this says: a name we assumed the donor defined but it does not is
+        # a paragraph that silently takes Word's own built-in definition,
+        # which differs by version and by locale.
+        "role_styles": dict(sorted((role_styles or {}).items())),
     })
 
     _json_dump(directory / EVIDENCE, {
@@ -488,6 +495,7 @@ class Profile:
     corpus: dict = field(default_factory=dict)
     template_sha: str | None = None
     skeleton: dict = field(default_factory=dict)
+    role_styles: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls, directory: Path) -> Profile:
@@ -501,6 +509,7 @@ class Profile:
             corpus=document.get("corpus") or {},
             template_sha=(document.get("template") or {}).get("sha256"),
             skeleton=document.get("skeleton") or {},
+            role_styles=document.get("role_styles") or {},
         )
 
     @property
@@ -560,6 +569,20 @@ class Profile:
             parts = pointer.split("/")
             if len(parts) > 4 and parts[1] == "styles":
                 out.add(parts[3])
+        return out
+
+    def roles(self) -> set[str]:
+        """Roles the corpus had an opinion about, however it was expressed.
+
+        On a corpus with no styles this is the only place the format lives:
+        every paragraph was `Normal`, so `/styles/...` learned one bucket and
+        `/roles/...` learned the title, the headings and the body apart.
+        """
+        out: set[str] = set()
+        for pointer in self.rules:
+            parts = pointer.split("/")
+            if len(parts) > 2 and parts[1] == "roles":
+                out.add(parts[2])
         return out
 
     @property

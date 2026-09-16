@@ -24,6 +24,7 @@ from .consensus import Consensus, build
 from .donor import DonorScore, ScrubReport, rank, scrub
 from .formfields import FormReport, find_fields
 from .materialize import MaterializeReport, materialize
+from .rolestyles import RoleStyleReport, materialize_roles
 from .observe import DocObservations, observe
 from .placeholders import SkeletonProfile, classify as classify_slots
 from .skeleton import properties_for, skeleton_for
@@ -41,6 +42,7 @@ class LearnResult:
     skeleton: SkeletonProfile | None = None
     materialized: MaterializeReport | None = None
     declared: FormReport | None = None
+    role_styles: RoleStyleReport | None = None
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -139,6 +141,12 @@ def learn(
     result.skeleton, result.materialized = _infer_skeleton(
         paths, observations, best.doc, donor_pkg, overrides.placeholders)
 
+    # A format the corpus agreed on but the donor cannot express is only
+    # half a profile: apply restyles by pointing w:pStyle somewhere, and on a
+    # hand-formatted corpus there is nowhere to point. This writes the roles
+    # the corpus agreed on into the donor as real styles.
+    result.role_styles = materialize_roles(donor_pkg, _role_values(consensus))
+
     # Two sources, one set of placeholders. The comparator finds a field by
     # noticing that twelve documents differ in the same place; a form simply
     # says where its fields are. Neither subsumes the other -- a report has
@@ -191,14 +199,31 @@ def learn(
         template_sha=result.template_sha,
         generated=generated,
         skeleton=result.skeleton,
+        role_styles=(result.role_styles.mapping if result.role_styles else None),
     )
     result.notes.extend(_donor_notes(donor_pkg, consensus))
+    if result.role_styles is not None and (note := result.role_styles.note()):
+        result.notes.append(note)
     if result.skeleton is not None:
         result.notes.extend(result.skeleton.warnings)
         note = result.materialized.note() if result.materialized else None
         if note:
             result.notes.append(note)
     return result
+
+
+def _role_values(consensus: Consensus) -> dict:
+    """The role consensus, filtered to what lint would actually enforce.
+
+    A value the corpus was split on is not a house format, and writing it
+    into the donor would turn one exemplar's habit into everybody's rule.
+    """
+    return {
+        pointer: vote.value
+        for pointer, vote in consensus.votes.items()
+        if pointer.startswith("/roles/") and vote.in_donor
+        and vote.value is not None
+    }
 
 
 MIN_CORPUS_FOR_SKELETON = 3

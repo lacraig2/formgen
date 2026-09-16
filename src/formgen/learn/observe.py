@@ -79,6 +79,7 @@ class DocMeta:
     sha256: str | None = None
     paragraphs: int = 0
     blocks: int = 0
+    roles_classified: int = 0
     runs: int = 0
     direct_runs: int = 0
     styles_used: tuple[str, ...] = ()
@@ -183,6 +184,7 @@ def observe(pkg: OpcPackage, doc: str) -> DocObservations:
     _observe_sections(obs, sections, _primary_section(pkg, sections))
     _observe_lists(obs, numbering, used_lists=_used_lists(pkg, styles, numbering))
     _observe_hdrftr(obs, pkg, sections)
+    _observe_roles(obs, meta, pkg)
 
     meta.styles_used = tuple(sorted(used))
     meta.has_tracked_changes = settings.track_changes or _has_revisions(pkg)
@@ -193,6 +195,54 @@ def observe(pkg: OpcPackage, doc: str) -> DocObservations:
     )
     obs.meta = meta
     return obs
+
+
+def _observe_roles(obs: DocObservations, meta: DocMeta, pkg: OpcPackage) -> None:
+    """What each ROLE looks like, regardless of what style carries it.
+
+    Everything else here is keyed on a style name, which is the right key
+    when a document has styles. Half of real documents do not: 48% of the
+    Apache POI corpus uses two or fewer paragraph styles, because Google Docs
+    export, PDF conversion and plain hand-formatting all leave every
+    paragraph as Normal with the formatting written out on the runs.
+
+    For those, a style-keyed ballot collapses the title, the headings and the
+    body into one bucket called `normal`, and the corpus learns only the body
+    size. The look of the headings -- the most visible thing about a house
+    format -- is not merely learned badly, it is invisible.
+
+    So paragraphs also vote by the role the classifier assigns them, which is
+    recovered from appearance and works precisely where styles do not. A
+    guess is not a ballot: only classifications the classifier is confident
+    enough not to flag are allowed to vote, and `/roles/...` is observed
+    alongside `/rendered/...` rather than instead of it, because when a
+    document does have styles they are the better key.
+    """
+    from ..classify.features import build_context
+    from ..classify.rules import EMPTY, classify_document
+
+    try:
+        ctx = build_context(pkg)
+        results = classify_document(ctx)
+    except Exception:       # pragma: no cover - never fail a ballot on this
+        return
+
+    voted = 0
+    for features in ctx.features:
+        if not features.is_paragraph or features.is_empty:
+            continue
+        result = results.get(features.path)
+        if result is None or result.needs_review or result.role == EMPTY:
+            continue
+        if features.block.context.kind != "body":
+            continue
+        base = ptr("roles", result.role)
+        for prop in RENDERED_PARA_PROPS:
+            obs.add(f"{base}/para/{prop}", getattr(features.para, prop, None))
+        for prop in RENDERED_PROPS:
+            obs.add(f"{base}/run/{prop}", getattr(features.run, prop, None))
+        voted += 1
+    meta.roles_classified = voted
 
 
 # -- document defaults and theme -----------------------------------------

@@ -31,6 +31,7 @@ from ..classify.rules import (
     EMPTY, LIST_BULLET, LIST_NUMBER, PLACEHOLDER, Classification, classify_document, role_for_style_name,
 )
 from ..learn.skeleton import heading_key
+from ..oox.styles import normalize_style_name
 from ..oox.walk import Block, exact_key, match_key
 from ..opc.package import OpcPackage
 from ..profile.io import Profile
@@ -159,12 +160,21 @@ def _has_revisions(ctx: DocumentContext) -> bool:
 
 
 def _role_to_style(profile: Profile) -> dict[str, str]:
-    """role -> the profile style name that implements it."""
+    """role -> the profile style name that implements it.
+
+    Styles the corpus used come first, because a style a real document
+    carried is the real article. Roles learned from appearance fill in the
+    rest: on a corpus with no styles that is the *only* mapping there is, and
+    `learn` has written a style into the donor for each of them, so there is
+    something for `w:pStyle` to point at.
+    """
     out: dict[str, str] = {}
     for name in sorted(profile.style_names):
         role = role_for_style_name(name)
         if role:
             out.setdefault(role, name)
+    for role, name in sorted(profile.role_styles.items()):
+        out.setdefault(role, normalize_style_name(name))
     return out
 
 
