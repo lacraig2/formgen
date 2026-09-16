@@ -72,7 +72,13 @@ def document_items(pkg: OpcPackage, ctx: DocumentContext | None = None
         # footnotes are format rather than structure -- the donor carries
         # them wholesale -- and a cover page is almost always a borderless
         # layout table, so excluding tables would exclude the placeholders.
-        if not features.is_paragraph or block.context.kind not in _ALIGNED:
+        # The part check is not redundant with the kind check: `kind` is
+        # "table" for a paragraph in ANY part's table, so a header laid out
+        # as a table would otherwise be aligned as though it were body
+        # structure -- which is what the comment above says it is not.
+        if not features.is_paragraph or block.context.part != pkg.main_document:
+            continue
+        if block.context.kind not in _ALIGNED:
             continue
         result = results.get(features.path)
         role = result.role if result else "body"

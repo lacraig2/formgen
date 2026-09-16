@@ -319,3 +319,41 @@ itself. The donor's name went from the README for the same reason: it is the
 single most revealing string in the corpus, because it names the one document
 `template.docx` is a copy of. Its *score* stays, which is what a reader needs
 to judge the choice.
+
+
+### What the real documents said
+
+Synthetic fixtures cannot tell you whether a rule over-removes, because you
+built them to match the rule. So the pass was run over 130 real documents from
+the Apache POI corpus — converted, hand-formatted, malformed, foreign-language
+and adversarial — in three shapes: heterogeneous triples (nothing agrees, so
+maximum pressure toward removal), each document against two copies of itself
+(everything agrees, so *nothing* should be removed), and all 68 usable
+documents as one corpus.
+
+The identical-corpus case is the one that matters, and it is where two real
+defects showed up.
+
+**A letterhead is usually a table, and usually in the header.** A block's
+context reports `kind == "table"` for a paragraph inside a table in *any*
+part, so a header laid out as a table read as body content: body clearing
+wiped the header of every template learned from a document that had one. Both
+the redaction and the alignment were relying on the kind alone — and the
+alignment's own docstring already said headers are format rather than
+structure. Both now check the part as well. Reverting either fix alone leaves
+the other masking it, which is why the regression tests were checked against
+each fix separately rather than together.
+
+**`drop_part` could leave a package that refused to save.** `dangling_rels`
+read `cached or Relationships.parse(blob)`, and `Relationships` defines
+`__len__`, so an *emptied* collection is falsy and the stale bytes were read
+back. Dropping the last relationship of a part is exactly when this bites.
+The defect was in the OPC layer and predates any of this; redaction is simply
+the first thing that empties a rels part completely.
+
+After both: no crashes in 27 runs, integrity intact everywhere, and every
+identical corpus keeps 100% of its text. The one that kept 88% is a Danish
+mail-merge letter, and the four missing words are the cached
+`«Fornavn» «Efternavn»` recipient values — removed, while the MERGEFIELD
+instructions that produce them survive, which is the intended behaviour
+appearing on a document nobody wrote as a test.

@@ -392,3 +392,31 @@ def test_serialized_bytes_are_cached_between_calls():
     pkg = make()
     pkg.edit(pkg.main_document)
     assert pkg.blob("word/document.xml") is pkg.blob("word/document.xml")
+
+
+def test_dropping_the_last_relationship_of_a_part_reaches_the_saved_file(tmp_path):
+    """`cached or parse(blob)` re-read the original bytes when the cache was EMPTY.
+
+    Relationships defines __len__, so an emptied collection is falsy. Dropping
+    a part that something referenced left the in-memory rels correct and the
+    integrity check reading the stale blob -- so save refused to write a
+    package that was, in fact, fine. Found on a real document whose footer
+    held a logo.
+    """
+    from fixtures import build
+
+    pkg = build.make()
+    build.add_hdrftr(pkg, "footer", "footer1.xml", "Acme")
+    pkg.add_part("word/media/logo.png", b"\x89PNG\r\n\x1a\nLOGO", "image/png")
+    pkg.relate(RT["image"], "word/media/logo.png", "word/footer1.xml")
+    assert pkg.dangling_rels() == []
+
+    pkg.drop_part("word/media/logo.png")
+    assert [r.rid for r in pkg.rels("word/footer1.xml")] == []
+    assert pkg.dangling_rels() == [], "the emptied rels were read from the stale blob"
+
+    out = tmp_path / "out.docx"
+    pkg.save(out, deterministic=True)
+    reopened = OpcPackage.open(out)
+    assert "word/media/logo.png" not in reopened
+    assert [r.rid for r in reopened.rels("word/footer1.xml")] == []

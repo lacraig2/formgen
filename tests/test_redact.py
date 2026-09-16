@@ -809,3 +809,79 @@ def test_and_the_readme_says_which_two(tmp_path):
     readme = (profile / "README.md").read_text()
     assert "corpus.json" in readme and "evidence.json" in readme
     assert "delete both before sharing" in readme
+
+
+# -- a letterhead is usually a table, and usually in the header ----------
+
+
+def header_table(i: int, shared: str, varying: str) -> str:
+    return (f'<w:tbl {build.W}><w:tr>'
+            f'<w:tc><w:tcPr/><w:p><w:r><w:t>{shared}</w:t></w:r></w:p></w:tc>'
+            f'<w:tc><w:tcPr/><w:p><w:r><w:t>{varying}</w:t></w:r></w:p></w:tc>'
+            f'</w:tr></w:tbl>')
+
+
+def corpus_with_header_table(tmp_path, shared, varying):
+    (tmp_path / "corpus").mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(3):
+        pkg = exemplar(i)
+        rid = build.add_hdrftr(pkg, "header", "header1.xml", "")
+        header = pkg.edit("word/header1.xml")
+        header.append(etree.fromstring(header_table(i, shared, varying(i))))
+        # A w:tbl may not be a part's last child; Word repairs that.
+        header.append(etree.fromstring(f"<w:p {build.W}/>"))
+        sect = pkg.edit(pkg.main_document).find(
+            f"{qn('w:body')}/{qn('w:sectPr')}")
+        sect.insert(0, etree.fromstring(
+            f'<w:headerReference {build.W} {build.R} w:type="default" '
+            f'r:id="{rid}"/>'))
+        path = tmp_path / "corpus" / f"r{i}.docx"
+        pkg.save(path, deterministic=True)
+        paths.append(path)
+    return paths
+
+
+def test_a_letterhead_table_in_the_header_is_not_treated_as_body(tmp_path):
+    """The block context says "table" for a paragraph in ANY part's table.
+
+    So a letterhead laid out as a table -- which is how most of them are
+    built -- read as body content, and body clearing wiped the header of
+    every template learned from a document that had one. The header has its
+    own pass, against the corpus, and this is what routes it there.
+    """
+    paths = corpus_with_header_table(
+        tmp_path, "Acme Laboratories", lambda i: "Quality Assured")
+    learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    header = text_of(template, "word/header1.xml")
+    assert "Acme Laboratories" in header
+    assert "Quality Assured" in header
+
+
+def test_but_varying_text_in_that_table_still_goes(tmp_path):
+    """Routing it to the header pass must not amount to exempting it."""
+    paths = corpus_with_header_table(
+        tmp_path, "Acme Laboratories", lambda i: f"Report LR-2024-004{i}")
+    learn(paths, tmp_path / "profile")
+    template = OpcPackage.open(tmp_path / "profile" / pio.TEMPLATE)
+    header = text_of(template, "word/header1.xml")
+    assert "Acme Laboratories" in header
+    assert "LR-2024-0040" not in header
+
+
+def test_the_alignment_does_not_see_header_tables_as_structure(tmp_path):
+    """Its own docstring says headers are format rather than structure.
+
+    The kind check alone did not implement that for a header built as a
+    table, so a letterhead became sections and slots in the skeleton.
+    """
+    from formgen.learn.skeleton import document_items
+
+    paths = corpus_with_header_table(
+        tmp_path, "Acme Laboratories", lambda i: f"Report {i}")
+    pkg = OpcPackage.open(paths[0])
+    headings, bodies = document_items(pkg)
+    everything = [item for items in bodies.values() for item in items]
+    everything += headings
+    assert not any("Acme Laboratories" in item.text for item in everything)

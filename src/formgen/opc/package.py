@@ -461,7 +461,14 @@ class OpcPackage:
             src = source_of_rels(name)
             cached = self._rels.get(name)
             try:
-                rels = cached or Relationships.parse(src, self._blobs[name])
+                # `cached or parse(...)` reads the stale blob whenever the
+                # cached collection is EMPTY, because Relationships defines
+                # __len__ and an empty one is falsy. Dropping the last
+                # relationship from a part is exactly when this matters: the
+                # in-memory rels are right, the check re-reads the original
+                # bytes, and save refuses to write a package that is fine.
+                rels = (cached if cached is not None
+                        else Relationships.parse(src, self._blobs[name]))
             except TargetError as exc:
                 bad.append((src, "-", str(exc)))
                 continue

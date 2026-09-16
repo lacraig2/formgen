@@ -190,7 +190,15 @@ def _clear_body(pkg: OpcPackage, ctx, skeleton, report: RedactReport) -> None:
     for index, features in enumerate(ctx.features):
         if index in keep or not features.is_paragraph:
             continue
-        if features.block.context.kind not in ("body", "table"):
+        # `kind` is "table" for any paragraph inside a table, in WHICHEVER
+        # part -- so a letterhead built as a table in the header reads as
+        # body content here. Headers and footers are redacted by their own
+        # pass, against the corpus, and blanking them from this one would
+        # delete the format rather than the data.
+        context = features.block.context
+        if context.part != pkg.main_document:
+            continue
+        if context.kind not in ("body", "table"):
             continue
         if features.is_empty:
             continue
@@ -435,6 +443,12 @@ def _drop_data_parts(pkg: OpcPackage, report: RedactReport) -> None:
     # vendor relationship types that have changed more than once, and a sweep
     # that missed one because the URI moved would be a silent leak.
     for part in list(pkg.names()):
+        # A .rels part is not dropped on its own -- it goes when the part it
+        # belongs to goes, and asking for it by name is an error. Real
+        # documents carry word/glossary/_rels/document.xml.rels, so the prefix
+        # sweep walks straight into it.
+        if part.endswith(".rels"):
+            continue
         if part in pkg and (part.startswith("customXml/")
                             or part in _DATA_FILES
                             or part.startswith(_DATA_TREES)):
