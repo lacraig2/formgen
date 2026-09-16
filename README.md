@@ -107,6 +107,31 @@ presentational and is dropped; one covering a proper sub-span is emphasis and
 is kept — which correctly keeps "the *p*-value was significant" and correctly
 discards **A WHOLE BOLD HEADING**.
 
+## It runs in a browser, unmodified
+
+The template-to-document half -- filling a form, rendering Markdown into the
+house format -- runs under [Pyodide](https://pyodide.org) with no port, no
+bindings and no shared subset: the same `.py` files, loaded into
+WebAssembly.
+
+```
+cd tools/wasm && npm install && node check.mjs
+  CPython : 10 paragraphs, 1 table, 1 footnote, 1 equation
+  WASM    : 10 paragraphs, 1 table, 1 footnote, 1 equation   (67 source files, unmodified)
+    identical  filled.docx     1ecb09322d0210d7...
+    identical  generated.docx  cb96bb040120b65e...
+```
+
+Byte-identical output is the whole claim, and CI enforces it. The alternative
+is a second implementation in JavaScript, which would have to re-derive the
+OPC preservation guarantee, the content-control handling, the field mechanics
+and the deterministic zip -- and would then drift from the Python one in ways
+nobody notices until a document is wrong.
+
+Everything except `word/` works this way. The Word COM layer is the one part
+that cannot: it is lazily imported and never on the critical path, so its
+absence costs a browser nothing the way it costs Linux nothing.
+
 ## Installing
 
 Python 3.10+. On the target — Windows, unprivileged, Anaconda 2023.07-2 —

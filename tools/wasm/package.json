@@ -1,0 +1,8 @@
+{
+  "name": "formgen-wasm-check",
+  "private": true,
+  "type": "module",
+  "description": "Proves formgen runs unmodified in the browser via Pyodide.",
+  "scripts": { "check": "node check.mjs" },
+  "dependencies": { "pyodide": "^0.28.0" }
+}

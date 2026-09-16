@@ -81,6 +81,29 @@ jobs:
         env:
           FORMGEN_SOFFICE_TIMEOUT: "300"
 
+  # The template-to-document path is the half people want in a browser. The
+  # alternative to this job is a second implementation in JavaScript, which
+  # would have to re-derive the OPC preservation guarantee, the content
+  # control handling and the deterministic zip -- and would then drift from
+  # the Python one in ways nobody notices until a document is wrong. So the
+  # same source runs under Pyodide and the output is compared byte for byte.
+  wasm:
+    name: the same source runs in WebAssembly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install -e ".[dev]"
+      - run: npm install
+        working-directory: tools/wasm
+      - run: node check.mjs
+        working-directory: tools/wasm
+
   lint:
     runs-on: ubuntu-latest
     steps:

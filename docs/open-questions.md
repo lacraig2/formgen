@@ -183,3 +183,38 @@ article carries conditional formatting, latent-style flags and linked
 character styles no reconstruction from JSON could reproduce -- and the
 role-to-style mapping is **recorded in profile.json**, not re-derived, so
 nothing ever points `w:pStyle` at a style we merely assumed was there.
+
+## 13. Why not a JavaScript implementation for the browser?
+
+The template-to-document half is the part people want client-side: fill a
+form, render Markdown into the house format, download a `.docx`, without the
+document ever leaving the machine. The obvious way to get that is to write it
+in JavaScript.
+
+We ran the Python under Pyodide instead, and the outputs are byte-identical:
+the same 67 source files, no port, no bindings, no shared subset.
+
+The reason is not that a JavaScript version would be hard. It is that it
+would be a **second implementation of the same guarantees**, and those
+guarantees are the whole product. It would have to re-derive the OPC
+preservation rule (parts we do not understand are copied byte for byte), the
+content-control and legacy-form-field mechanics, the field instruction
+handling, the deterministic zip, and the invariant suite -- and the moment
+the two drift, the drift shows up as somebody's document being subtly wrong,
+which is the failure mode this whole design exists to avoid.
+
+`tools/wasm/check.mjs` compares the two engines byte for byte and CI runs it,
+so "it also runs in the browser" is a property that is checked rather than a
+claim that was true once.
+
+The cost is real and worth stating: Pyodide is a ~10 MB download before
+anything happens, and start-up is seconds rather than milliseconds. For a
+page someone opens to fill in one form that is a poor trade; for a tool
+somebody keeps open while working through a batch it is a good one. If the
+download ever becomes the deciding factor, the answer is to trim the
+dependency set -- Pillow is needed only to scale images to the text column --
+not to write the whole thing twice.
+
+`word/` is the one part that cannot follow. It is lazily imported and never
+on the critical path, so a browser loses exactly what Linux loses: the
+optional Word verification layer, and nothing else.

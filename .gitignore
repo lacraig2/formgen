@@ -8,3 +8,7 @@ dist/
 *.formatted.docx
 *.bak-*.docx
 *.formgen-undo.json
+
+# WASM equivalence check
+tools/wasm/node_modules/
+tools/wasm/package-lock.json
