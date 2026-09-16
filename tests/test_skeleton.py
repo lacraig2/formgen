@@ -128,16 +128,42 @@ def test_wrapping_part_of_a_paragraph_splits_the_run_and_keeps_its_formatting():
     tag = sdt.find(f"{qn('w:sdtPr')}/{qn('w:tag')}")
     assert tag.get(qn("w:val")) == TAG_PREFIX + "report_number"
     inner = sdt.find(f"{qn('w:sdtContent')}/{qn('w:r')}")
-    assert inner.find(f"{qn('w:t')}").text == "LR-2024-0041"
     assert inner.find(f"{qn('w:rPr')}/{qn('w:b')}") is not None
-    assert "".join(block.itertext()) == "Report No. LR-2024-0041"
+    # The donor's real number does not survive into the template.
+    assert inner.find(f"{qn('w:t')}").text == "Report Number"
+    assert "LR-2024-0041" not in "".join(block.itertext())
+    assert "".join(block.itertext()) == "Report No. Report Number"
 
 
 def test_a_whole_paragraph_placeholder_needs_no_split():
     block = paragraph("L. Craig")
     assert wrap(block, "author", "L. Craig") is None
     assert len(block.findall(qn("w:r"))) == 0
-    assert "".join(block.itertext()) == "L. Craig"
+    assert "".join(block.itertext()) == "Author"
+
+
+def test_the_template_does_not_ship_the_donors_own_values():
+    """template.docx is a byte-faithful copy of somebody's real report. Left
+    alone, every template carries that person's number, name and date in its
+    fields, and anyone who types over the body ships them onward."""
+    block = paragraph("Report No. LR-2024-0041")
+    wrap(block, "report_number", "LR-2024-0041")
+    assert "LR-2024-0041" not in "".join(block.itertext())
+    props = block.find(f".//{qn('w:sdtPr')}")
+    assert props.find(qn("w:showingPlcHdr")) is not None
+
+
+def test_a_prompt_can_be_configured_and_a_real_default_can_replace_it():
+    prompted = paragraph("Report No. LR-2024-0041")
+    wrap(prompted, "report_number", "LR-2024-0041", replacement="LR-YYYY-NNNN")
+    assert "LR-YYYY-NNNN" in "".join(prompted.itertext())
+    assert prompted.find(f".//{qn('w:showingPlcHdr')}") is not None
+
+    fixed = paragraph("Status: Final")
+    wrap(fixed, "status", "Final", replacement="Draft", showing=False)
+    assert "Draft" in "".join(fixed.itertext())
+    # A real default is not greyed out: it is meant to print.
+    assert fixed.find(f".//{qn('w:showingPlcHdr')}") is None
 
 
 def test_an_ambiguous_value_is_left_alone_rather_than_guessed_at():
@@ -440,7 +466,7 @@ def test_a_slot_addresses_the_donor_block_it_actually_came_from(tmp_path):
         tag = sdt.find(f"{qn('w:sdtPr')}/{qn('w:tag')}").get(qn("w:val"))
         content = sdt.find(qn("w:sdtContent"))
         inside[tag] = "".join(content.itertext())
-    assert inside["formgen.report_number"].startswith("LR-20")
+    assert inside["formgen.report_number"] == "Report Number"
     assert "Report Number:" not in inside["formgen.report_number"]
 
 

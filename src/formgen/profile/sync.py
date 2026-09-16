@@ -144,21 +144,36 @@ def placeholders_in(pkg: OpcPackage) -> dict[str, dict]:
 
 
 def _frame_around(sdt, name: str) -> str:
-    """Rebuild "Report No. {report_number}" from the control's own paragraph."""
+    """Rebuild "Report No. {report_number}" from the control's own paragraph.
+
+    Split on where the control *is*, not on where its text appears. A field
+    holding the prompt "Report No" inside a paragraph reading "Report No.
+    Report No" has two matches for its own content, and a string search takes
+    the wrong one -- producing "{report_no}. Report No" as the literal frame,
+    which then matches nothing on the next re-learn.
+    """
     paragraph = sdt.getparent()
     while paragraph is not None and paragraph.tag != qn("w:p"):
         paragraph = paragraph.getparent()
     if paragraph is None:
         return ""
-    content = sdt.find(qn("w:sdtContent"))
-    inside = "".join(content.itertext()) if content is not None else ""
-    whole = "".join(paragraph.itertext())
-    if not inside or inside not in whole:
+    # Ask each node who its ancestors are, rather than collecting the
+    # control's descendants and comparing ids. lxml builds element proxies on
+    # demand and frees them as soon as nothing refers to them, so a set of
+    # `id()` values taken in one traversal matches nothing in the next -- the
+    # comparison silently finds no overlap and every frame comes out empty.
+    head, tail, seen = [], [], False
+    for node in paragraph.iter(qn("w:t")):
+        if any(ancestor is sdt for ancestor in node.iterancestors()):
+            seen = True
+            continue
+        (tail if seen else head).append(node.text or "")
+    if not seen:
         return ""
-    head, _, tail = whole.partition(inside)
-    if not head.strip() and not tail.strip():
+    before, after = "".join(head), "".join(tail)
+    if not before.strip() and not after.strip():
         return ""
-    return f"{head}{{{name}}}{tail}"
+    return f"{before}{{{name}}}{after}"
 
 
 def sync(directory: Path, today: str | None = None) -> SyncReport:

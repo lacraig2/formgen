@@ -88,6 +88,11 @@ def _split_run(run: etree._Element, node: etree._Element, offset: int) -> etree.
     return tail
 
 
+def humanise(name: str) -> str:
+    """report_number -> Report Number, for a prompt nobody configured."""
+    return " ".join(word.capitalize() for word in name.split("_")) or name
+
+
 def _sdt(name: str, alias: str | None = None) -> etree._Element:
     sdt = etree.Element(qn("w:sdt"))
     props = etree.SubElement(sdt, qn("w:sdtPr"))
@@ -110,8 +115,18 @@ def _stable_id(name: str) -> int:
 
 
 def wrap(paragraph: etree._Element, name: str, value: str,
-         alias: str | None = None) -> str | None:
+         alias: str | None = None, replacement: str | None = None,
+         showing: bool = True) -> str | None:
     """Wrap `value` inside `paragraph` in a content control.
+
+    `replacement` is what the control should hold afterwards. By default it
+    holds a *prompt* -- greyed text in Word reading "Report Number" -- rather
+    than the value it wrapped, because the value it wrapped is real. The
+    donor is a byte-faithful copy of somebody's actual report, so leaving it
+    means every template ships with that person's report number, name and
+    date sitting in the fields, and anyone who types over the body ships them
+    onward. `overrides.yaml` can set a real default instead where the house
+    format genuinely has one.
 
     Returns None on success, or a short reason it was left alone. Refusing is
     always better than restructuring a paragraph we do not understand: an
@@ -155,7 +170,40 @@ def wrap(paragraph: etree._Element, name: str, value: str,
     content = sdt.find(qn("w:sdtContent"))
     for run in covered:
         content.append(run)
+    _set_content(sdt, content,
+                 replacement if replacement is not None else humanise(name),
+                 showing=showing)
     return None
+
+
+def _set_content(sdt: etree._Element, content: etree._Element, text: str,
+                 showing: bool) -> None:
+    """Replace what the control holds, keeping the formatting it had.
+
+    `showing` sets `w:showingPlcHdr`, which is how Word knows to render the
+    text greyed and to clear it the moment somebody types. Without it the
+    prompt is just text, and it ends up printed in the finished report.
+    """
+    runs = [r for r in content if r.tag == qn("w:r")]
+    properties = deepcopy(runs[0].find(qn("w:rPr"))) if runs else None
+    for run in runs:
+        content.remove(run)
+    run = etree.Element(qn("w:r"))
+    if properties is not None:
+        run.append(properties)
+    node = etree.SubElement(run, qn("w:t"))
+    node.set(qn("xml:space"), "preserve")
+    node.text = text
+    content.append(run)
+
+    props = sdt.find(qn("w:sdtPr"))
+    for existing in props.findall(qn("w:showingPlcHdr")):
+        props.remove(existing)
+    if showing:
+        # Word's schema puts showingPlcHdr before the type element.
+        flag = etree.Element(qn("w:showingPlcHdr"))
+        type_el = props.find(qn("w:text"))
+        (type_el.addprevious(flag) if type_el is not None else props.append(flag))
 
 
 def _cut(pairs: list[tuple[etree._Element, etree._Element]], offset: int) -> None:
@@ -169,7 +217,8 @@ def _cut(pairs: list[tuple[etree._Element, etree._Element]], offset: int) -> Non
         seen += length
 
 
-def materialize(ctx, profile, doc: str) -> MaterializeReport:
+def materialize(ctx, profile, doc: str,
+                settings: dict[str, dict] | None = None) -> MaterializeReport:
     """Write every inferred placeholder into the donor's own paragraphs.
 
     `ctx` is the donor's :class:`DocumentContext` and `doc` its id in the
@@ -184,7 +233,18 @@ def materialize(ctx, profile, doc: str) -> MaterializeReport:
             continue
         paragraph = ctx.features[index].block.element
         value = slot.donor_value or ctx.features[index].text
-        why = wrap(paragraph, slot.name, value)
+        configured = (settings or {}).get(slot.name, {})
+        # `default` is a real value the house format actually fixes; `prompt`
+        # is what Word greys out until somebody types. Neither configured
+        # means a prompt made from the field's own name -- anything but the
+        # donor's own value, which belongs to whoever wrote that report.
+        default = configured.get("default")
+        if default is not None:
+            why = wrap(paragraph, slot.name, value,
+                       replacement=str(default), showing=False)
+        else:
+            why = wrap(paragraph, slot.name, value,
+                       replacement=configured.get("prompt"), showing=True)
         if why:
             report.skipped.append((slot.name, why))
         else:

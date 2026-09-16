@@ -252,7 +252,7 @@ def _infer_skeleton(paths, observations, donor_doc, donor_pkg, known=None):
     aligned = skeleton_for(corpus, contexts)
     profile = classify_slots(aligned, properties=properties, donor=donor_doc,
                              known=known)
-    report = materialize(contexts[donor_doc], profile, donor_doc)
+    report = materialize(contexts[donor_doc], profile, donor_doc, known)
     return profile, report
 
 
