@@ -117,6 +117,8 @@ def learn(ctx, exemplars, out, name, as_json):
         console.write(f"  donor: {result.donor.explain()}")
     if result.scrub_report:
         console.write(f"  scrub: {result.scrub_report.summary()}")
+    if result.redact_report:
+        console.write(f"  redact: {result.redact_report.summary()}")
     if result.skeleton is not None:
         skeleton = result.skeleton
         console.write(

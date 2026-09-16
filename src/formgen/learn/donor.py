@@ -132,6 +132,12 @@ class ScrubReport:
     removed: dict[str, int] = field(default_factory=dict)
     dropped_parts: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    # The names and company this document was labelled with. Kept -- not to
+    # put back, but so redaction can look for them in the text it decided to
+    # KEEP. A corpus written by one person has that person's name in every
+    # footer, so the corpus agrees on it and consensus calls it house
+    # boilerplate. Only the scrubbed identity can tell us otherwise.
+    identities: tuple[str, ...] = ()
 
     def count(self, what: str, n: int = 1) -> None:
         if n:
@@ -273,11 +279,14 @@ def _scrub_core_properties(pkg: OpcPackage, report: ScrubReport) -> None:
         return
     root = pkg.edit(name)
     cleared = 0
+    found: list[str] = []
     for tag in ("dc:creator", "cp:lastModifiedBy", "cp:lastPrinted",
                 "dc:description", "cp:keywords", "dc:subject", "cp:category"):
         for el in root.findall(qn(tag)):
             if el.text:
                 cleared += 1
+                if tag in ("dc:creator", "cp:lastModifiedBy"):
+                    found.append(el.text)
             el.text = None
     revision = root.find(qn("cp:revision"))
     if revision is not None:
@@ -291,4 +300,8 @@ def _scrub_core_properties(pkg: OpcPackage, report: ScrubReport) -> None:
             for el in app_root.findall(qn(tag)):
                 if el.text:
                     report.count("personal properties")
+                    found.append(el.text)
                 el.text = None
+    report.identities = tuple(
+        dict.fromkeys(t.strip() for t in found if len(t.strip()) > 2)
+    )

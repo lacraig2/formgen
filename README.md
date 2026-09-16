@@ -40,6 +40,30 @@ all ride along for free, byte-identical — and the single largest corruption
 surface in docx tooling, cross-package part copying, is removed from the
 codebase rather than handled.
 
+### It is the format, not the report it came from
+
+The donor starts as somebody's real document, so two passes run before it
+becomes a template. `scrub` removes identity and editing state — author names,
+revision ids, spell-check caches, comments, document protection. `redact`
+removes the *content*, on the rule the comparator already computes:
+
+> The donor keeps what the corpus agreed on. What only the donor said is data.
+
+A paragraph every exemplar shares is boilerplate and stays. A paragraph only
+this document has is one author's prose and goes. Headings always stay — they
+are the skeleton. A placeholder keeps its frame and loses its value, so the
+control reads *Report Number* rather than `LR-2024-0041`.
+
+Alongside that, everything that is data regardless of what the corpus says:
+the page-one thumbnail in `docProps/thumbnail.jpeg` (a JPEG of the cover, and
+the leak nobody inspects for), the custom XML store a content control was
+bound to, cached field results, custom property values, footnotes whose anchor
+was removed, and any image, embedding or external link left with nothing
+pointing at it.
+
+Where the rule cannot decide, it says so rather than guessing — see
+[open questions](docs/open-questions.md#14-what-can-the-redaction-not-decide).
+
 ## Word is the editor
 
 `learn` will get things wrong. That is inherent to inferring a convention

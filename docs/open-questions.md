@@ -218,3 +218,48 @@ not to write the whole thing twice.
 `word/` is the one part that cannot follow. It is lazily imported and never
 on the critical path, so a browser loses exactly what Linux loses: the
 optional Word verification layer, and nothing else.
+
+---
+
+## 14. What can the redaction *not* decide?
+
+The donor is somebody's real report. `scrub` takes their name off it;
+`learn/redact.py` takes their report out of it, on one rule:
+
+> The donor keeps what the corpus agreed on. What only the donor said is data.
+
+That rule is decidable for body text — a sentence three exemplars share is
+boilerplate, a sentence only this one has is the author's. Three things sit
+outside it, and each is handled differently on purpose.
+
+**A corpus written by one person.** Every report has their name in the footer,
+so every exemplar agrees, so consensus is certain it is house boilerplate. It
+is not. No amount of comparing the corpus against itself can tell, because the
+corpus is the thing that is biased. The only outside evidence is the identity
+we just scrubbed from the document properties, so a kept line containing a
+scrubbed name is **reported and left in place** — deleting it would be wrong on
+the many formats where the footer really is the house footer.
+
+**Fewer than three exemplars.** There is no agreement to compute, so the body
+is kept whole and `learn` says so. Guessing here fails in both directions: too
+eager and the template is gutted, too shy and the report ships.
+
+**Names rather than values.** A content control's alias, a bookmark name and a
+custom property's name are all kept, because each is something the format
+refers to *by name*: a `REF` field points at the bookmark, a `DOCPROPERTY`
+field at the property, and deleting either leaves the template with an
+unresolvable field. Their *values* go. This is the one place where a
+determined leak could survive — a bookmark named after a client — and the
+judgment is that breaking every cross-reference in the template is the worse
+failure.
+
+Everything unambiguous goes regardless of corpus size: the page-one thumbnail
+in `docProps/thumbnail.jpeg`, the custom XML store a content control was bound
+to, cached field results, custom property values, `TitlesOfParts`, footnotes
+whose anchor was removed, and any media, embedding or external link left with
+nothing pointing at it.
+
+The second-order effect matters as much as the first. `apply` grafts the
+donor's headers and footers into *other people's* documents. Before this pass,
+a house format learned from twelve lab reports would have stamped the donor's
+own report number into the header of every document it touched.

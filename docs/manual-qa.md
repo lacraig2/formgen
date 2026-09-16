@@ -48,6 +48,23 @@ formgen learn C:\reports\*.docx -o profiles\lab-report
 - [ ] If required placeholder names came out below confidence, the exit code
       is 1 and the artifacts are **still written**.
 
+### Read the template as if you were about to email it to a stranger
+
+`learn` prints a `redact:` line saying what it removed. Verify it by opening
+`template.docx` and looking for what should not be there.
+
+- [ ] No sentence from any single exemplar survives — only text every
+      exemplar shared.
+- [ ] The distribution statement, the section headings and the house
+      header/footer *did* survive. A gutted template is as wrong as a leaky one.
+- [ ] Content controls show a greyed prompt, not the donor's real values.
+- [ ] In Explorer, switch the profile folder to a large-icon view: the
+      template's preview must not be a picture of the donor's cover page.
+- [ ] File → Info → Properties → Advanced Properties → Custom: property names
+      may remain, values must be empty.
+- [ ] Any name `learn` reported as "still appears in ..." really is the house
+      format and not a person. If it is a person, delete it here.
+
 ### The console is the classic crash
 
 Run the same command in `cmd.exe` with `chcp 1252`, and again with a document

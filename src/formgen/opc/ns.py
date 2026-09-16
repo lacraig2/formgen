@@ -72,6 +72,12 @@ RT = {
     "extended": f"{_OFFICE_REL}/extended-properties",
     "custom": f"{_OFFICE_REL}/custom-properties",
     "core": f"{_PKG_REL}/metadata/core-properties",
+    "thumbnail": f"{_PKG_REL}/metadata/thumbnail",
+    # The custom XML store. A content control's w:dataBinding points into
+    # it, so it holds the *values* a bound template was last filled with.
+    "customXml": f"{_OFFICE_REL}/customXml",
+    "package": f"{_OFFICE_REL}/package",
+
     # Word 2010+ comment sidecars
     "commentsExtended": (
         "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"

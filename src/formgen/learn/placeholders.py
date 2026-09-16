@@ -258,7 +258,13 @@ def classify(
                 _name(slot, column_texts, previous_text, properties or {},
                       column, known or {})
                 _type(slot, column_texts)
-                _locate_in_donor(slot, column, donor)
+            # Every slot, not only the placeholders: knowing which of the
+            # donor's own blocks a column came from is what lets the donor be
+            # stripped back to the format. A slot with no donor index is one
+            # the donor did not contribute to, and redaction reads the absence
+            # as "the corpus never vouched for this block", so populating it
+            # only for placeholders would blank the boilerplate.
+            _locate_in_donor(slot, column, donor)
             profile.slots.append(slot)
             previous_text = _modal(column_texts)
             index += 1

@@ -22,6 +22,7 @@ from ..profile import io as pio
 from ..profile.sync import placeholders_in
 from .consensus import Consensus, build
 from .donor import DonorScore, ScrubReport, rank, scrub
+from .redact import RedactReport, redact
 from .formfields import FormReport, find_fields
 from .materialize import MaterializeReport, materialize
 from .rolestyles import RoleStyleReport, materialize_roles
@@ -38,6 +39,7 @@ class LearnResult:
     ranking: list[DonorScore]
     donor: DonorScore | None = None
     scrub_report: ScrubReport | None = None
+    redact_report: RedactReport | None = None
     template_sha: str | None = None
     skeleton: SkeletonProfile | None = None
     materialized: MaterializeReport | None = None
@@ -138,7 +140,7 @@ def learn(
     # already named must keep that name, or re-learning with a bigger corpus
     # silently undoes their work.
     overrides = pio.Overrides.load(directory / pio.OVERRIDES)
-    result.skeleton, result.materialized = _infer_skeleton(
+    result.skeleton, result.materialized, donor_ctx, corpus = _infer_skeleton(
         paths, observations, best.doc, donor_pkg, overrides.placeholders)
 
     # A format the corpus agreed on but the donor cannot express is only
@@ -154,6 +156,16 @@ def learn(
     # of a form -- so both run, and this is read after materialization so the
     # comparator's inferences are already declared in the donor too.
     result.declared = find_fields(donor_pkg)
+
+    # Last, because it needs every earlier pass's answer: the skeleton to
+    # know which paragraphs the corpus vouched for, and materialization to
+    # have already turned the placeholders into empty controls. A donor is
+    # somebody's real document -- scrubbing takes their name off it, this
+    # takes their report out of it.
+    result.redact_report = redact(
+        donor_pkg, ctx=donor_ctx, skeleton=result.skeleton, corpus=corpus,
+        identities=(result.scrub_report.identities
+                    if result.scrub_report else ()))
 
     directory.mkdir(parents=True, exist_ok=True)
     template = directory / pio.TEMPLATE
@@ -202,6 +214,8 @@ def learn(
         role_styles=(result.role_styles.mapping if result.role_styles else None),
     )
     result.notes.extend(_donor_notes(donor_pkg, consensus))
+    if result.redact_report:
+        result.notes.extend(result.redact_report.notes)
     if result.role_styles is not None and (note := result.role_styles.note()):
         result.notes.append(note)
     if result.skeleton is not None:
@@ -239,7 +253,7 @@ def _infer_skeleton(paths, observations, donor_doc, donor_pkg, known=None):
     """
     docs = [o.doc for o in observations]
     if len(docs) < MIN_CORPUS_FOR_SKELETON:
-        return None, None
+        return None, None, None, None
 
     corpus: dict[str, OpcPackage] = {}
     properties: dict[str, dict[str, str]] = {}
@@ -253,7 +267,7 @@ def _infer_skeleton(paths, observations, donor_doc, donor_pkg, known=None):
     profile = classify_slots(aligned, properties=properties, donor=donor_doc,
                              known=known)
     report = materialize(contexts[donor_doc], profile, donor_doc, known)
-    return profile, report
+    return profile, report, contexts[donor_doc], corpus
 
 
 def _donor_notes(pkg: OpcPackage, consensus: Consensus) -> list[str]:
