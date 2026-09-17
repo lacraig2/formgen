@@ -90,12 +90,12 @@ def available() -> tuple[bool, str]:
         import win32com.client  # noqa: F401
     except ImportError:
         return False, (
-            "pywin32 is not importable. It ships with Anaconda on Windows; "
-            "in a bare environment, `pip install --user pywin32`."
+            "The pywin32 module is not importable. It ships with Anaconda on "
+            "Windows; in a bare environment, `pip install --user pywin32`."
         )
     if not has_interactive_desktop():
         return False, (
-            "no interactive desktop session; Word cannot be automated from a "
+            "No interactive desktop session; Word cannot be automated from a "
             "service or a headless agent."
         )
     return True, ""

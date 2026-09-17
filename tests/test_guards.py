@@ -10,6 +10,7 @@ Windows job will catch them, because the Windows job runs last.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -93,6 +94,9 @@ def test_a_missing_output_directory_is_a_usage_error_not_a_traceback(tmp_path):
 # -- MAX_PATH ------------------------------------------------------------
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"),
+                    reason="asserts the off-Windows path; on Windows the UNC "
+                           "prefix is correct and has its own test")
 def test_a_long_path_is_left_alone_off_windows(tmp_path):
     deep = tmp_path / ("d" * 120) / ("e" * 200) / "x.docx"
     assert not guards.long_path(deep).startswith("\\\\?\\")

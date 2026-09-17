@@ -201,6 +201,18 @@ def test_text_boxes_are_excluded_because_word_puts_them_in_another_story():
 # -- degradation ----------------------------------------------------------
 
 
+# The three below assert the *Word-absent* path -- what a machine without Word
+# automation does. On a Windows CI runner with pywin32 and a desktop session
+# `com.available()` optimistically says yes, so they only make sense where it
+# says no (Linux, and bare Windows without pywin32).
+_word_absent = pytest.mark.skipif(
+    com.available()[0],
+    reason="this machine reports Word automation available; these assert the "
+           "Word-absent path",
+)
+
+
+@_word_absent
 def test_doctor_skips_cleanly_where_word_is_absent(tmp_path):
     report = run(tmp_path / "missing.docx")
     assert report.skipped is True
@@ -208,12 +220,14 @@ def test_doctor_skips_cleanly_where_word_is_absent(tmp_path):
     assert "works without Word" in report.render()
 
 
+@_word_absent
 def test_availability_reports_a_reason_a_human_can_act_on():
     usable, reason = com.available()
     assert usable is False
     assert reason and reason[0].isupper()
 
 
+@_word_absent
 def test_the_cli_doctor_command_skips_without_failing(tmp_path):
     from click.testing import CliRunner
     from formgen.cli import cli
