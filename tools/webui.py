@@ -62,8 +62,9 @@ code{background:var(--code);padding:2px 6px;border-radius:6px}
   font:inherit;font-weight:600;cursor:pointer}
 .tab.on{background:var(--card);color:var(--fg);box-shadow:var(--shadow)}
 .pane{margin-top:16px}
-.drop{border:1.5px dashed var(--line);border-radius:13px;padding:26px;text-align:center;
-  background:var(--code);cursor:pointer;transition:.12s border-color,.12s background}
+.drop{display:block;border:1.5px dashed var(--line);border-radius:13px;padding:26px;
+  text-align:center;background:var(--code);cursor:pointer;
+  transition:.12s border-color,.12s background}
 .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
 .drop input{display:none}
 .drop .big{font-weight:600;margin-bottom:3px}
