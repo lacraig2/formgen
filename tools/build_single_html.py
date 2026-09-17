@@ -182,7 +182,12 @@ async function boot(){
   try {
     msg("Starting Python…");
     const lock = new TextDecoder().decode(shimB64(document.getElementById("a-lock").textContent));
-    py = await loadPyodide({ indexURL: new URL("./", location.href).href, lockFileContents: lock });
+    // packageBaseUrl is required in Pyodide 0.28 for the lock's relative wheel
+    // names; the fetch shim serves them by filename, so any base ending in "/"
+    // works. Without it loadPackage("lxml") fails quietly and the import below
+    // blows up -- which no Node-side check catches, only a real browser.
+    const here = new URL("./", location.href).href;
+    py = await loadPyodide({ indexURL: here, packageBaseUrl: here, lockFileContents: lock });
     msg("Loading libraries…");
     await py.loadPackage("lxml");
     msg("Unpacking formgen…");

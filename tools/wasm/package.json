@@ -3,6 +3,13 @@
   "private": true,
   "type": "module",
   "description": "Proves formgen runs unmodified in the browser via Pyodide.",
-  "scripts": { "check": "node check.mjs" },
-  "dependencies": { "pyodide": "^0.28.0" }
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "pyodide": "^0.28.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
 }

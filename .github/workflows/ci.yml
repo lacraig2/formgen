@@ -110,6 +110,14 @@ jobs:
       - run: python tools/build_single_html.py
       - run: node check_single.mjs
         working-directory: tools/wasm
+      # Node loads packages from disk; only a real browser exercises the in-page
+      # fetch shim and Pyodide's browser package resolution. This is the check
+      # that catches an offline build that boots everywhere but the browser.
+      - name: Prove it boots and fills in a real browser
+        working-directory: tools/wasm
+        run: |
+          npx playwright install --with-deps firefox
+          node check_browser.mjs
 
   lint:
     runs-on: ubuntu-latest
