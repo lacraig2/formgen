@@ -22,7 +22,7 @@ import { createHash } from "node:crypto";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const SRC = path.join(ROOT, "src");
-const PACKAGES = ["lxml", "pyyaml", "python-dateutil", "pillow", "click",
+const PACKAGES = ["lxml", "pyyaml", "python-dateutil", "click",
                   "markdown-it-py"];
 
 const MARKDOWN = `---

@@ -13,14 +13,17 @@ dependencies = [
     "PyYAML",
     "markdown-it-py",
     "python-dateutil",
-    "Pillow",
 ]
 
 [project.optional-dependencies]
 # Word COM: doctor, --refresh, --pdf. Ships with Anaconda on Windows and is
 # imported lazily inside word/com.py, so nothing breaks without it.
 word = ["pywin32; sys_platform == 'win32'"]
-dev = ["pytest", "ruff"]
+# Pillow is a test-only dependency: it writes the image fixtures and is the
+# oracle test_imageinfo.py checks our own header reader against. Nothing under
+# src/ imports it -- emit.py used to, for image sizing alone, but that is now
+# content/imageinfo.py, so the browser bundle no longer downloads the wheel.
+dev = ["pytest", "ruff", "Pillow"]
 
 # Deliberately absent: scikit-learn (the corpus clustering is an exhaustive
 # two-medoid search -- deterministic, and about forty lines) and

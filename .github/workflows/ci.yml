@@ -103,6 +103,11 @@ jobs:
         working-directory: tools/wasm
       - run: node check.mjs
         working-directory: tools/wasm
+      # The single-file distributable embeds the same source; build it and
+      # prove it runs in the browser and produces the same bytes as CPython.
+      - run: python tools/build_single_html.py
+      - run: node check_single.mjs
+        working-directory: tools/wasm
 
   lint:
     runs-on: ubuntu-latest
@@ -112,4 +117,87 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check src tests
+      - run: ruff check src tests tools
+
+  # Every merge to main is a release. The version is the last v* tag with its
+  # patch bumped -- monotonic, no commit written back, so it never loops. The
+  # one artifact is the offline single-file build: open it in a browser and it
+  # needs nothing else, which is the whole point of shipping it this way.
+  publish:
+    name: release the single file
+    needs: [test, wasm, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # tags, to work out the next version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+        working-directory: tools/wasm
+      - name: Work out the next version
+        id: ver
+        run: |
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            next="0.1.1"
+          else
+            v=${latest#v}; IFS=. read -r a b c <<< "$v"; next="$a.$b.$((c + 1))"
+          fi
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "tag=v$next" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$next"
+      - name: Build the single file
+        run: |
+          python tools/build_single_html.py dist/formgen.html
+          cp dist/formgen.html "formgen-v${{ steps.ver.outputs.version }}.html"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            "formgen-v${{ steps.ver.outputs.version }}.html" \
+            --target "${{ github.sha }}" \
+            --title "formgen ${{ steps.ver.outputs.tag }}" \
+            --notes "Offline, self-contained build. Download the .html and open it in any browser -- no install, no network, and the documents you fill never leave your machine. Built from ${{ github.sha }}."
+
+  # Also publish the single file as the live site, so there is a URL people can
+  # just open. It runs entirely in the visitor's browser, so nothing they do
+  # reaches the server.
+  pages:
+    name: publish the live app
+    needs: [test, wasm, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+        working-directory: tools/wasm
+      - run: python tools/build_single_html.py public/index.html
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deploy
+        uses: actions/deploy-pages@v4

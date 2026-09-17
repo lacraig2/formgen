@@ -41,6 +41,7 @@ from .ast import (
     LineBreak, Link, ListBlock, Math, MathBlock, PageBreak,
     Paragraph, Table, TableOfContents, Text, ThematicBreak,
 )
+from .imageinfo import read_image
 from .omml import to_omml
 
 EMU_PER_PIXEL_AT_96 = 9525
@@ -868,13 +869,11 @@ class Emitter:
         """
         pixels = (600, 400)
         dpi = (DEFAULT_IMAGE_DPI, DEFAULT_IMAGE_DPI)
-        try:
-            from PIL import Image as PILImage
-
-            with PILImage.open(path) as handle:
-                pixels = handle.size
-                dpi = handle.info.get("dpi", dpi) or dpi
-        except Exception:
+        info = read_image(path)
+        if info is not None:
+            pixels = info.size
+            dpi = info.dpi or dpi
+        else:
             self.report.warnings.append(
                 f"could not read the size of {path.name}; assumed 600x400"
             )

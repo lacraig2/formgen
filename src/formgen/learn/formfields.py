@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, NamedTuple
 
 from lxml import etree
 
@@ -41,6 +41,9 @@ from ..oox.walk import Block, Walker, field_instructions
 TEXT = "text"
 CHECKBOX = "checkbox"
 CHOICE = "choice"
+IMAGE = "image"
+DATE = "date"
+NUMBER = "number"
 
 # Word's own auto-generated names carry no meaning -- Text42 is the
 # forty-second field somebody dropped in, not a description of anything.
@@ -67,6 +70,80 @@ _MARKERS = (
 
 _SLUG = re.compile(r"[^a-z0-9]+")
 
+# A prefix inside a marker turns plain text into a richer slot. This is the
+# whole authoring convention -- no Developer tab, no content controls, just
+# typed into an ordinary document:
+#   {{image: headshot}}                 a picture
+#   {{check: agreed}}                   a tick box
+#   {{choice: status | Draft, Final}}   pick one of a list
+# and a dotted name, {{items.qty}}, is one column of a repeating row (see
+# find_repeats). Anything with no prefix is text.
+_IMAGE_MARKER = re.compile(r"^\s*(?:image|img)\s*:\s*(.+?)\s*$", re.I)
+_CHECK_MARKER = re.compile(r"^\s*(?:check|checkbox|bool)\s*:\s*(.+?)\s*$", re.I)
+_DATE_MARKER = re.compile(r"^\s*date\s*:\s*(.+?)\s*$", re.I)
+_NUMBER_MARKER = re.compile(r"^\s*(?:number|num|amount)\s*:\s*(.+?)\s*$", re.I)
+_CHOICE_MARKER = re.compile(
+    r"^\s*(?:choice|select|pick)\s*:\s*([^|]+?)\s*(?:\|\s*(.*?))?\s*$", re.I)
+
+# The typed prefixes that take a plain name (choice is handled apart, because
+# its pipe carries options rather than a prompt).
+_TYPED = ((IMAGE, _IMAGE_MARKER), (CHECKBOX, _CHECK_MARKER),
+          (DATE, _DATE_MARKER), (NUMBER, _NUMBER_MARKER))
+
+
+class Marker(NamedTuple):
+    """What one marker means. `name` is cleaned of the `*` and `| ...` an author
+    may add; `required` and `label` carry those back so the form can use them.
+    For an image, `label` is the picture's alt text as well as its form label."""
+    kind: str
+    name: str
+    choices: tuple[str, ...] = ()
+    required: bool = False
+    label: str = ""
+
+
+def _split_prompt(body: str) -> tuple[str, str]:
+    """A trailing `| words` is an author-written label/prompt for the field --
+    and, for a picture, its alt text. Split it off the name."""
+    if "|" in body:
+        name, _, prompt = body.partition("|")
+        return name.strip(), prompt.strip()
+    return body.strip(), ""
+
+
+def _required(name: str) -> tuple[str, bool]:
+    """A trailing `*` on the name means the form must not leave it blank."""
+    name = name.strip()
+    if name.endswith("*"):
+        return name[:-1].strip(), True
+    return name, False
+
+
+def marker_kind(inner: str) -> Marker:
+    """Parse a marker's inner text into a `Marker`.
+
+    The grammar, all optional except the name:
+    ``[type:] name [*] [| label]`` -- a type prefix (image/check/date/number,
+    or choice which instead lists options after the pipe), a trailing ``*`` for
+    required, and a ``| label`` prompt. Shared by discovery and fill so the two
+    never disagree on what a marker means.
+    """
+    hit = _CHOICE_MARKER.match(inner)
+    if hit:
+        options = tuple(o.strip() for o in (hit.group(2) or "").split(",")
+                        if o.strip())
+        name, required = _required(hit.group(1))
+        return Marker(CHOICE, name, options, required, "")
+    for kind, pattern in _TYPED:
+        hit = pattern.match(inner)
+        if hit:
+            name, label = _split_prompt(hit.group(1))
+            name, required = _required(name)
+            return Marker(kind, name, (), required, label)
+    name, label = _split_prompt(inner)
+    name, required = _required(name)
+    return Marker(TEXT, name, (), required, label)
+
 
 def slug(text: str) -> str:
     stripped = _QUESTION_NUMBER.sub("", text.strip(), count=1)
@@ -86,6 +163,7 @@ class FormField:
     ordinal: int = 0            # which field of its kind within that block
     value: str = ""
     choices: tuple[str, ...] = ()
+    required: bool = False
     needs_review: bool = False
 
     @property
@@ -219,6 +297,14 @@ class _Labels:
 # -- the four declarations ------------------------------------------------
 
 
+def _int(value: str | None) -> int:
+    """A dropdown's selected index, tolerating a malformed non-numeric val."""
+    try:
+        return int(value) if value else 0
+    except ValueError:
+        return 0
+
+
 def _ff_kind(data: etree._Element) -> tuple[str, tuple[str, ...], str]:
     if data.find(qn("w:checkBox")) is not None:
         checked = data.find(f"{qn('w:checkBox')}/{qn('w:checked')}")
@@ -231,7 +317,7 @@ def _ff_kind(data: etree._Element) -> tuple[str, tuple[str, ...], str]:
             for e in ddlist.findall(qn("w:listEntry"))
         )
         chosen = ddlist.find(qn("w:result"))
-        index = int(chosen.get(qn("w:val")) or 0) if chosen is not None else 0
+        index = _int(chosen.get(qn("w:val")) if chosen is not None else None)
         return CHOICE, entries, (entries[index] if index < len(entries) else "")
     default = data.find(f"{qn('w:textInput')}/{qn('w:default')}")
     return TEXT, (), (default.get(qn("w:val")) or "" if default is not None else "")
@@ -332,6 +418,7 @@ def find_fields(pkg: OpcPackage) -> FormReport:
         _from_ffdata(block, labels, report)
         _from_instructions(block, labels, report)
         _from_markers(block, report)
+        _from_pictures(block, report)
 
     for item in report.fields:
         base = item.name or "field"
@@ -342,6 +429,69 @@ def find_fields(pkg: OpcPackage) -> FormReport:
         item.name = name
         used.add(name)
     return report
+
+
+# -- repeating rows -------------------------------------------------------
+
+# A dotted marker names a column of a repeating group: `{{items.qty}}` is the
+# `qty` column of the `items` list. Kept deliberately plain -- a bare name on
+# each side, no nesting -- so the whole rule is "same word before the dot means
+# the same row, repeated once per record you supply".
+_DOTTED = re.compile(r"^\s*([A-Za-z0-9_]+)\.([A-Za-z0-9_. -]+?)\s*$")
+
+
+@dataclass
+class RepeatColumn:
+    name: str                       # the field after the dot, e.g. "qty"
+    label: str                      # a human label, e.g. "Qty"
+    kind: str = TEXT                # text | image | checkbox | choice
+    choices: tuple[str, ...] = ()   # options, for a choice column
+
+
+@dataclass
+class RepeatGroup:
+    name: str                                   # the collection, e.g. "items"
+    columns: list[RepeatColumn] = field(default_factory=list)
+
+
+def find_repeats(pkg: OpcPackage) -> list[RepeatGroup]:
+    """The repeating groups a document declares, in first-seen order.
+
+    One per collection named by a dotted marker; its columns are the fields
+    after the dot. A column is whatever kind its marker is -- ``{{items.qty}}``
+    is a text column, ``{{image: items.photo}}`` a picture column,
+    ``{{check: items.done}}`` a tick box, ``{{choice: items.s | a, b}}`` a pick
+    list -- so a repeating row can hold the same richness a single field can.
+    The unit that repeats (a table row or a paragraph) is decided at fill time,
+    so discovery here only has to know the shape of one record.
+    """
+    root = pkg.element(pkg.main_document)
+    groups: dict[str, RepeatGroup] = {}
+    seen_columns: dict[str, set] = {}
+    for node in root.iter(qn("w:t")):
+        text = node.text or ""
+        if "." not in text:
+            continue
+        for _, pattern in _MARKERS:
+            for match in pattern.finditer(text):
+                marker = marker_kind(match.group(1).strip())
+                dotted = _DOTTED.match(marker.name)
+                if dotted is None:
+                    continue
+                collection = slug(dotted.group(1))
+                column = dotted.group(2).strip()
+                group = groups.setdefault(collection, RepeatGroup(collection))
+                columns = seen_columns.setdefault(collection, set())
+                if slug(column) not in columns:
+                    columns.add(slug(column))
+                    group.columns.append(RepeatColumn(
+                        slug(column), marker.label or _prettify(column),
+                        marker.kind, marker.choices))
+    return list(groups.values())
+
+
+def _prettify(text: str) -> str:
+    return text.replace("_", " ").strip().title() or text
 
 
 def _from_sdt(block: Block, report: FormReport) -> None:
@@ -370,19 +520,91 @@ def _from_sdt(block: Block, report: FormReport) -> None:
             continue
         content = sdt.find(qn("w:sdtContent"))
         showing = props.find(qn("w:showingPlcHdr")) is not None
-        value = "" if showing else (
+        kind = _sdt_kind(props)
+        # A picture control's "value" is an embedded image, not text; reading
+        # its runs would give the placeholder graphic's alt text, not a value.
+        value = "" if showing or kind == IMAGE else (
             "".join(content.itertext()) if content is not None else "")
-        _add_control(block, tag, value, ordinal, report)
+        _add_control(block, tag, value, ordinal, report, kind=kind)
+
+
+def _sdt_kind(props: etree._Element) -> str:
+    """The field kind a content control's type element implies.
+
+    Only the picture control is singled out -- it is the one that needs an
+    image rather than text. Everything else stays text here; choices and
+    check boxes are found more reliably from the legacy `w:ffData` path.
+    """
+    if props.find(qn("w:picture")) is not None:
+        return IMAGE
+    return TEXT
+
+
+# -- pictures marked by their alt text ------------------------------------
+#
+# An author can turn a picture already in the document into an image field by
+# writing a marker in its alt text (Word: right-click > Edit Alt Text). The
+# picture stays -- its size, position, wrap and borders are the author's, and
+# fill only swaps the image inside it. Bracket markers are excluded here: alt
+# text is often prose, and `[a note]` should not silently become a field.
+_PICTURE_MARKERS = tuple((name, pat) for name, pat in _MARKERS if name != "bracket")
+
+
+def picture_marker(drawing: etree._Element) -> str | None:
+    """The marker inner text written in a drawing's alt text, or None.
+
+    Read from the drawing's `wp:docPr` (description and title) and the picture's
+    own `pic:cNvPr` description -- wherever Word stores what a person types into
+    the Alt Text box."""
+    candidates: list[str] = []
+    for doc_pr in drawing.iter(qn("wp:docPr")):
+        candidates += [doc_pr.get("descr") or "", doc_pr.get("title") or ""]
+    for cnv in drawing.iter(qn("pic:cNvPr")):
+        candidates += [cnv.get("descr") or ""]
+    for text in candidates:
+        for _name, pattern in _PICTURE_MARKERS:
+            hit = pattern.search(text)
+            if hit is not None:
+                return hit.group(1)
+    return None
+
+
+def in_content_control(element: etree._Element) -> bool:
+    """Whether `element` sits inside a `w:sdt` -- a picture content control is
+    handled by `_from_sdt`, so picture discovery skips its drawing."""
+    node = element.getparent()
+    while node is not None:
+        if node.tag == qn("w:sdt"):
+            return True
+        node = node.getparent()
+    return False
+
+
+def _from_pictures(block: Block, report: FormReport) -> None:
+    for drawing in block.element.iter(qn("w:drawing")):
+        if in_content_control(drawing):
+            continue
+        inner = picture_marker(drawing)
+        if inner is None:
+            continue
+        marker = marker_kind(inner.strip())
+        # It is a picture, so it is an image field whatever the marker's prefix.
+        report.fields.append(FormField(
+            kind=IMAGE, source="picture", raw_name=inner[:60],
+            name=slug(marker.name), name_confidence=0.9,
+            name_source="a picture's alt text", label=marker.label,
+            block_path=block.path, required=marker.required,
+        ))
 
 
 def _add_control(block: Block, tag: str, value: str, ordinal: int,
-                 report: FormReport) -> None:
+                 report: FormReport, kind: str = TEXT) -> None:
     name = tag[len("formgen."):] if tag.startswith("formgen.") else tag
     if any(f.source == "sdt" and f.raw_name == tag and
            f.block_path == block.path for f in report.fields):
         return
     report.fields.append(FormField(
-        kind=TEXT, source="sdt", raw_name=tag, name=slug(name),
+        kind=kind, source="sdt", raw_name=tag, name=slug(name),
         name_confidence=1.0, name_source="the content control's own tag",
         block_path=block.path, ordinal=ordinal, value=value,
     ))
@@ -458,13 +680,18 @@ def _from_markers(block: Block, report: FormReport) -> None:
     ordinal = 0
     for style, pattern in _MARKERS:
         for match in pattern.finditer(text):
-            inner = match.group(1).strip()
-            if not inner or len(inner.split()) > 6:
+            marker = marker_kind(match.group(1).strip())
+            if not marker.name or len(marker.name.split()) > 6:
                 continue
+            if _DOTTED.match(marker.name):
+                continue  # a dotted name is a repeating-row column (find_repeats)
             ordinal += 1
             report.fields.append(FormField(
-                kind=TEXT, source="marker", raw_name=match.group(0),
-                name=slug(inner), name_confidence=0.50,
+                kind=marker.kind, source="marker", raw_name=match.group(0),
+                name=slug(marker.name), name_confidence=0.50,
                 name_source=f"a {style} marker in the text",
-                block_path=block.path, ordinal=ordinal - 1, needs_review=True,
+                label=marker.label,  # author-written prompt / alt text, if any
+                block_path=block.path, ordinal=ordinal - 1,
+                choices=marker.choices, required=marker.required,
+                needs_review=True,
             ))
