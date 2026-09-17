@@ -28,10 +28,13 @@ _KINDS = {IMAGE: "image", CHECKBOX: "checkbox", CHOICE: "choice",
 
 
 def _open(data: bytes) -> OpcPackage:
-    with tempfile.NamedTemporaryFile(suffix=".docx") as handle:
-        handle.write(data)
-        handle.flush()
-        return OpcPackage.open(Path(handle.name))
+    # A directory, not NamedTemporaryFile: Windows will not let the package be
+    # reopened while the temp file's own handle is still open. `open` reads the
+    # bytes into memory, so the file is gone by the time the caller uses it.
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "in.docx"
+        path.write_bytes(data)
+        return OpcPackage.open(path)
 
 
 def _save(pkg: OpcPackage) -> bytes:
