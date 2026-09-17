@@ -105,6 +105,8 @@ jobs:
         working-directory: tools/wasm
       # The single-file distributable embeds the same source; build it and
       # prove it runs in the browser and produces the same bytes as CPython.
+      - run: node fetch_lxml.mjs
+        working-directory: tools/wasm
       - run: python tools/build_single_html.py
       - run: node check_single.mjs
         working-directory: tools/wasm
@@ -142,6 +144,9 @@ jobs:
           node-version: "20"
       - run: npm install
         working-directory: tools/wasm
+      - name: Fetch the lxml wheel the build embeds
+        working-directory: tools/wasm
+        run: node fetch_lxml.mjs
       - name: Work out the next version
         id: ver
         run: |
@@ -192,6 +197,9 @@ jobs:
           node-version: "20"
       - run: npm install
         working-directory: tools/wasm
+      - name: Fetch the lxml wheel the build embeds
+        working-directory: tools/wasm
+        run: node fetch_lxml.mjs
       - run: python tools/build_single_html.py public/index.html
       - uses: actions/configure-pages@v5
         with:
