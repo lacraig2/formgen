@@ -105,14 +105,14 @@ BODY = r"""
 <div class="wrap">
   <header>
     <div class="mark">f</div>
-    <div class="brand"><h1>formgen</h1><p>Fill Word forms without breaking their formatting.</p></div>
+    <div class="brand"><h1>formgen</h1><p>Fill Word &amp; PowerPoint forms without breaking their formatting.</p></div>
     <div class="grow"></div>
     <button class="btn ghost" id="docsBtn">Docs</button>
   </header>
 
   <section class="card" id="docs" hidden>
     <h2>How it works</h2>
-    <p class="sub">Write an ordinary Word document. Wherever a value goes, type a marker &mdash;
+    <p class="sub">Write an ordinary Word document or PowerPoint deck. Wherever a value goes, type a marker &mdash;
       no Developer tab, no content controls. Then upload it here and fill it in.</p>
     <div class="docgrid">
       <div class="d"><code>{{full_name}}</code><p>text (multi-line is fine)</p></div>
@@ -126,6 +126,9 @@ BODY = r"""
       <div class="d"><code>{{email*}}</code><p>a trailing <code>*</code> makes it required</p></div>
       <div class="d"><code>{{image: logo | Company logo}}</code><p><code>| label</code> gives a prompt &mdash; and a picture's alt text</p></div>
     </div>
+    <p class="muted" style="margin-top:14px">In <b>PowerPoint</b>, the text markers above work anywhere on a slide, and
+      an image field is a picture you mark in its alt text. (Inline <code>{{image:}}</code> and repeating tables are
+      Word-only &mdash; on a slide they stay as plain text.)</p>
     <p class="muted" style="margin-top:14px">The finished document <b>remembers your answers</b>:
       reopen it here and the form comes back filled in, ready to edit. Nothing you upload leaves this
       page.</p>
@@ -139,9 +142,9 @@ BODY = r"""
 
     <div class="pane" id="paneTemplate">
       <label class="drop" id="tplDrop">
-        <div class="big">Drop a .docx here, or click to choose</div>
-        <div class="muted">Your template with <code>{{markers}}</code> &mdash; or a finished form to edit again</div>
-        <input type="file" id="tpl" accept=".docx">
+        <div class="big">Drop a .docx or .pptx here, or click to choose</div>
+        <div class="muted">Your Word or PowerPoint template with <code>{{markers}}</code> &mdash; or a finished form to edit again</div>
+        <input type="file" id="tpl" accept=".docx,.pptx">
       </label>
       <div class="row">
         <button class="btn ghost" id="starter">Download a starter template</button>
@@ -184,14 +187,17 @@ const $ = id => document.getElementById(id);
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function b64(buf){const b=new Uint8Array(buf);let s='';for(let i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s);}
 function b64bytes(s){return Uint8Array.from(atob(s),c=>c.charCodeAt(0));}
-function saveDocx(b64s,name){
-  const blob=new Blob([b64bytes(b64s)],{type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
+const MIME={docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx:"application/vnd.openxmlformats-officedocument.presentationml.presentation"};
+function saveFile(b64s,name,kind){
+  const blob=new Blob([b64bytes(b64s)],{type:MIME[kind]||MIME.docx});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),4000);
 }
+const saveDocx=(b64s,name)=>saveFile(b64s,name,"docx");
 
-let CUR=null, FIELDS=[], GROUPS=[], PREFILL={};
+let CUR=null, CUR_KIND="docx", FIELDS=[], GROUPS=[], PREFILL={};
 const IMAGES={};
 const KIND_LABEL={image:"picture",checkbox:"tick box",choice:"pick one",date:"date",number:"number",text:"text"};
 const reqMark=f=>f.required?' <span class="req" title="required">*</span>':'';
@@ -202,9 +208,10 @@ async function inspectBytes(bytes){
   CUR=bytes; for(const k in IMAGES) delete IMAGES[k];
   $("inspectstate").textContent="reading…";
   let d; try { d=await window.__bench.inspect(bytes); } catch(e){ d={ok:false,error:String(e)}; }
-  if(d && d.ok===false){ $("inspectstate").innerHTML=`<span class="bad">${esc(d.error||"could not read that .docx")}</span>`;
+  if(d && d.ok===false){ $("inspectstate").innerHTML=`<span class="bad">${esc(d.error||"could not read that file")}</span>`;
     $("formcard").hidden=true; return; }
-  FIELDS=d.fields||[]; GROUPS=d.groups||[]; PREFILL=d.prefill||{};
+  FIELDS=d.fields||[]; GROUPS=d.groups||[]; PREFILL=d.prefill||{}; CUR_KIND=d.kind||"docx";
+  $("fill").textContent="Fill & download ."+CUR_KIND;
   const n=FIELDS.length+GROUPS.length;
   $("inspectstate").innerHTML=(n
     ? `Found <b>${FIELDS.length}</b> field${FIELDS.length===1?'':'s'}`+(GROUPS.length?` and <b>${GROUPS.length}</b> repeating table${GROUPS.length===1?'':'s'}`:'')+`.`
@@ -346,8 +353,9 @@ async function doFill(){
   let d; try { d=await window.__bench.fill(CUR, collect()); } catch(e){ d={ok:false,error:String(e)}; }
   $("fill").disabled=false; $("fillstate").textContent="";
   if(!d||d.ok===false){ $("result").innerHTML=`<p class="bad">${esc((d&&d.error)||"fill failed")}</p>`; return; }
-  saveDocx(d.docx,"filled.docx");
-  let h=`<p><span class="pill">${esc(d.summary)}</span> &nbsp;downloaded <b>filled.docx</b></p>`;
+  const kind=d.kind||CUR_KIND, fname="filled."+kind;
+  saveFile(d.docx,fname,kind);
+  let h=`<p><span class="pill">${esc(d.summary)}</span> &nbsp;downloaded <b>${esc(fname)}</b></p>`;
   if(d.filled&&d.filled.length) h+=`<p class="muted">filled: ${d.filled.map(esc).join(", ")}</p>`;
   if(d.cleared&&d.cleared.length) h+=`<p class="muted">cleared (left blank): ${d.cleared.map(esc).join(", ")}</p>`;
   if(d.unknown&&d.unknown.length) h+=`<p class="muted">ignored (no such marker): ${d.unknown.map(esc).join(", ")}</p>`;

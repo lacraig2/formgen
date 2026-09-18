@@ -123,16 +123,19 @@ def _marker_inner(full: str) -> str | None:
     return None
 
 
-def _text_segments(paragraph: etree._Element):
-    """The paragraph's run text concatenated, with a map from each `w:t` node to
+def _text_segments(paragraph: etree._Element, t_tag: str = qn("w:t"),
+                   r_tag: str = qn("w:r")):
+    """The paragraph's run text concatenated, with a map from each text node to
     its span in that string. Only text that sits directly in a run counts --
-    which is exactly the text a marker can be typed into."""
+    which is exactly the text a marker can be typed into. The tags default to
+    WordprocessingML but are given as `a:t`/`a:r` for a DrawingML paragraph on
+    a slide, so the same coalescing serves both formats."""
     parts: list[str] = []
     segments: list[tuple[etree._Element, int, int]] = []
     pos = 0
-    for node in paragraph.iter(qn("w:t")):
+    for node in paragraph.iter(t_tag):
         parent = node.getparent()
-        if parent is None or parent.tag != qn("w:r"):
+        if parent is None or parent.tag != r_tag:
             continue
         text = node.text or ""
         segments.append((node, pos, pos + len(text)))
@@ -171,15 +174,17 @@ def _pull_into_first(segments: list, start: int, end: int, text: str) -> None:
     last_node.text = tail
 
 
-def _coalesce_markers(paragraph: etree._Element, should_pull) -> bool:
+def _coalesce_markers(paragraph: etree._Element, should_pull,
+                      t_tag: str = qn("w:t"), r_tag: str = qn("w:r")) -> bool:
     """Pull every fillable split marker in the paragraph into a single run.
 
     `should_pull(match)` decides marker by marker -- only markers about to be
     filled are moved, so a split marker with no value stays byte-for-byte as the
-    author left it. Returns whether anything moved."""
+    author left it. Returns whether anything moved. The tags default to
+    WordprocessingML; a slide paragraph passes `a:t`/`a:r`."""
     changed = False
     while True:
-        text, segments = _text_segments(paragraph)
+        text, segments = _text_segments(paragraph, t_tag, r_tag)
         span = _first_split(text, segments, should_pull)
         if span is None:
             return changed
@@ -226,7 +231,16 @@ def fill(pkg: OpcPackage, values: dict[str, Any],
     `keep_unsupplied` leaves a field the caller said nothing about holding
     whatever the donor held. It defaults to False and should stay that way:
     the donor is a real document and its values are somebody's.
+
+    A ``.pptx`` is filled by a parallel slide-walking path; everything a
+    presentation supports (typed text/date/number/check/choice markers and
+    pictures marked in their alt text) lives there. The import is deferred so
+    the two modules can lean on each other's helpers without an import cycle.
     """
+    from .presentation import fill_presentation, is_presentation
+    if is_presentation(pkg):
+        return fill_presentation(pkg, values, keep_unsupplied)
+
     from ..learn.formfields import find_fields
 
     report = FillReport()

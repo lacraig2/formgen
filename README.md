@@ -151,6 +151,12 @@ house format -- runs under [Pyodide](https://pyodide.org) with no port, no
 bindings and no shared subset: the same `.py` files, loaded into
 WebAssembly.
 
+The form filler takes **Word (`.docx`) and PowerPoint (`.pptx`)** alike. The
+marker grammar is identical on a slide -- `{{name}}`, `{{choice: s | a, b}}`,
+`{{check: agreed}}` and the rest fill in place, and a picture marked in its
+alt text has its image swapped -- because a presentation walks the same
+matcher, only over slide text (`a:p`/`a:r`/`a:t`) instead of a document body.
+
 ```
 cd tools/wasm && npm install && node check.mjs
   CPython : 10 paragraphs, 1 table, 1 footnote, 1 equation

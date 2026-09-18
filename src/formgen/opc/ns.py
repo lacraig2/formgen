@@ -16,6 +16,8 @@ NS = {
     # DrawingML
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
     "pic": "http://schemas.openxmlformats.org/drawingml/2006/picture",
+    # PresentationML (slides)
+    "p": "http://schemas.openxmlformats.org/presentationml/2006/main",
     "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
     "asvg": "http://schemas.microsoft.com/office/drawing/2016/SVG/main",
     # Office Math
@@ -61,6 +63,10 @@ RT = {
     "comments": f"{_OFFICE_REL}/comments",
     "header": f"{_OFFICE_REL}/header",
     "footer": f"{_OFFICE_REL}/footer",
+    # PresentationML: the presentation part's relationships to its slides,
+    # and a slide's to its notes.
+    "slide": f"{_OFFICE_REL}/slide",
+    "notesSlide": f"{_OFFICE_REL}/notesSlide",
     "image": f"{_OFFICE_REL}/image",
     "hyperlink": f"{_OFFICE_REL}/hyperlink",
     "oleObject": f"{_OFFICE_REL}/oleObject",

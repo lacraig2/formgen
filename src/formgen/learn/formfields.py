@@ -405,7 +405,15 @@ def _label_side(pairs: list[tuple[str, str]]) -> str:
 
 
 def find_fields(pkg: OpcPackage) -> FormReport:
-    """Every field this one document declares about itself."""
+    """Every field this one document declares about itself.
+
+    A ``.pptx`` declares its fields only through typed markers and marked-up
+    pictures, on slides rather than in a body, so it is discovered by a
+    parallel path (imported late to avoid an import cycle)."""
+    from ..content.presentation import find_presentation_fields, is_presentation
+    if is_presentation(pkg):
+        return find_presentation_fields(pkg)
+
     report = FormReport()
     blocks = Walker(pkg).blocks()
     labels = _Labels(blocks)
@@ -464,7 +472,13 @@ def find_repeats(pkg: OpcPackage) -> list[RepeatGroup]:
     list -- so a repeating row can hold the same richness a single field can.
     The unit that repeats (a table row or a paragraph) is decided at fill time,
     so discovery here only has to know the shape of one record.
+
+    Repeating groups are a WordprocessingML feature; a presentation has none.
     """
+    from ..content.presentation import is_presentation
+    if is_presentation(pkg):
+        return []
+
     root = pkg.element(pkg.main_document)
     groups: dict[str, RepeatGroup] = {}
     seen_columns: dict[str, set] = {}

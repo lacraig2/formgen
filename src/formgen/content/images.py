@@ -24,15 +24,21 @@ DEFAULT_DPI = 96
 
 
 def add_image_part(pkg: OpcPackage, data: bytes, extension: str,
-                   content_type: str, owner: str = "") -> str:
-    """Add `data` as a media part and relate the document to it; return the id.
+                   content_type: str, owner: str = "",
+                   media_dir: str = "") -> str:
+    """Add `data` as a media part and relate `owner` to it; return the id.
 
-    The part is minted next to the document (`word/media/imageN.ext`), its
-    content type registered, and an `r:id` handed back for a blip's `r:embed`.
+    The part is minted in a `media/` folder, its content type registered, and
+    an `r:id` handed back for a blip's `r:embed`. By default the folder sits
+    beside the owning part (`word/media/imageN.ext`); `media_dir` overrides
+    that when the owner and the media convention part ways -- a slide relates
+    to its image, but PowerPoint keeps every deck's media in `ppt/media/`, not
+    under `ppt/slides/`.
     """
     owner = owner or pkg.main_document
+    folder = media_dir or posixpath.dirname(owner)
     partname = pkg.unique_partname(
-        posixpath.join(posixpath.dirname(owner), f"media/image{{n}}{extension}")
+        posixpath.join(folder, f"media/image{{n}}{extension}")
     )
     pkg.add_part(partname, data, content_type)
     return pkg.relate(RT["image"], partname, owner)

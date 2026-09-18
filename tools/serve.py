@@ -150,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": True, **bench.inspect(self._body())})
                 except PackageError as exc:
                     self._json({"ok": False,
-                                "error": f"not a .docx we could read: {exc}"})
+                                "error": f"not a .docx or .pptx we could read: {exc}"})
             elif self.path == "/api/fill":
                 self._json(_fill(json.loads(self._body() or b"{}")))
             elif self.path == "/api/learn":

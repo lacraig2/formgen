@@ -15,6 +15,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from .content.fill import fill
+from .content.presentation import is_presentation
 from .content.session import (
     encode_answers, read_session, template_of, write_session,
 )
@@ -68,6 +69,7 @@ def inspect(data: bytes) -> dict:
 
 def _inspect(data: bytes) -> dict:
     pkg = _open(data)
+    flavor = "pptx" if is_presentation(pkg) else "docx"
     fields: "OrderedDict[str, dict]" = OrderedDict()
     for item in find_fields(pkg).fields:
         if not item.name or item.name in fields:
@@ -89,7 +91,7 @@ def _inspect(data: bytes) -> dict:
                      for col in group.columns]}
         for group in find_repeats(pkg)
     ]
-    return {"fields": list(fields.values()), "groups": groups}
+    return {"fields": list(fields.values()), "groups": groups, "kind": flavor}
 
 
 def fill_document(data: bytes, text: dict | None = None,
@@ -120,8 +122,10 @@ def fill_document(data: bytes, text: dict | None = None,
         if isinstance(records, list):
             values[name] = records
     report = fill(pkg, values)
+    kind = "pptx" if is_presentation(pkg) else "docx"
     write_session(pkg, template, encode_answers(text, checks, images, groups))
     info = {
+        "kind": kind,
         "summary": report.summary(),
         "filled": sorted(set(report.filled)),
         "cleared": sorted(set(report.cleared)),
